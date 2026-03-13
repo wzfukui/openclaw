@@ -33,6 +33,15 @@ export type AniWsMessage = {
       id?: number;
       title?: string;
     };
+    attachments?: Array<{
+      type?: string;
+      url?: string;
+      filename?: string;
+      mime_type?: string;
+      size?: number;
+      duration?: number;
+      content?: string;
+    }>;
   };
 };
 
@@ -123,6 +132,71 @@ function parseArtifacts(text: string): Array<{
   return segments;
 }
 
+// ---------------------------------------------------------------------------
+// Attachment processing: download text files inline, describe others
+// ---------------------------------------------------------------------------
+
+const TEXT_MIME_PREFIXES = ['text/', 'application/json', 'application/xml', 'application/yaml'];
+const TEXT_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml', '.log', '.toml', '.ini', '.cfg', '.conf', '.sh', '.py', '.js', '.ts', '.go', '.rs', '.sql'];
+const MAX_TEXT_FILE_SIZE = 102400; // 100KB
+
+function isTextFile(mimeType?: string, filename?: string): boolean {
+  if (mimeType && TEXT_MIME_PREFIXES.some(p => mimeType.startsWith(p))) return true;
+  if (filename) {
+    const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+    return TEXT_EXTENSIONS.includes(ext);
+  }
+  return false;
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes) return 'unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+async function processAttachments(
+  attachments: NonNullable<NonNullable<AniWsMessage['data']>['attachments']>,
+  serverUrl: string,
+  apiKey: string,
+): Promise<string> {
+  const parts: string[] = [];
+
+  for (const att of attachments) {
+    const filename = att.filename || 'unknown';
+    const url = att.url;
+
+    if (!url) {
+      parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown type'}, ${formatFileSize(att.size)})]`);
+      continue;
+    }
+
+    // Build full URL (ANI uses relative paths like /files/...)
+    const fullUrl = url.startsWith('http') ? url : `${serverUrl}${url}`;
+
+    if (isTextFile(att.mime_type, att.filename) && (att.size ?? 0) <= MAX_TEXT_FILE_SIZE) {
+      try {
+        const res = await fetch(fullUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (res.ok) {
+          const content = await res.text();
+          parts.push(`--- Attached file: ${filename} ---\n${content}\n--- End of file ---`);
+        } else {
+          parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown'}, ${formatFileSize(att.size)}) — could not download]`);
+        }
+      } catch {
+        parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown'}, ${formatFileSize(att.size)}) — download failed]`);
+      }
+    } else {
+      parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown type'}, ${formatFileSize(att.size)})]`);
+    }
+  }
+
+  return parts.join('\n\n');
+}
+
 /**
  * Creates a handler function for incoming ANI WebSocket messages.
  * Only handles `message_new` events, routes them through the OpenClaw
@@ -162,7 +236,15 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       if (!conversationId) return;
 
       const text = msg.layers?.summary ?? msg.layers?.detail ?? "";
-      if (!text.trim()) return;
+
+      // Process attachments (download text files, describe others)
+      const attachments = msg.attachments ?? [];
+      let attachmentText = '';
+      if (attachments.length > 0) {
+        attachmentText = await processAttachments(attachments, serverUrl, apiKey);
+      }
+
+      if (!text.trim() && attachments.length === 0) return;
 
       const senderId = msg.sender_id ?? 0;
       const senderName =
@@ -202,7 +284,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         timestamp: msg.created_at ? new Date(msg.created_at).getTime() : undefined,
         previousTimestamp,
         envelope: envelopeOptions,
-        body: text,
+        body: attachmentText ? `${text}\n\n${attachmentText}` : text,
       });
 
       const ctxPayload = core.channel.reply.finalizeInboundContext({
