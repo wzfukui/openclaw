@@ -157,7 +157,7 @@ function isTextFile(mimeType?: string, filename?: string): boolean {
 }
 
 function formatFileSize(bytes?: number): string {
-  if (!bytes) return 'unknown size';
+  if (bytes == null) return 'unknown size';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1048576).toFixed(1)} MB`;
@@ -228,6 +228,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
   // Cache conversation metadata (refreshed every 5 minutes)
   const convCache = new Map<number, { conv: AniConversation; memories: AniMemory[]; fetchedAt: number }>();
   const CACHE_TTL = 5 * 60 * 1000;
+  const CACHE_MAX_SIZE = 100;
 
   async function getConversationContext(conversationId: number): Promise<{
     conv: AniConversation | null;
@@ -242,6 +243,18 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       fetchConversationMemories({ serverUrl, apiKey, conversationId }),
     ]);
     if (conv) {
+      // Evict oldest entry if cache is at capacity
+      if (convCache.size >= CACHE_MAX_SIZE && !convCache.has(conversationId)) {
+        let oldestKey: number | undefined;
+        let oldestTime = Infinity;
+        for (const [key, entry] of convCache) {
+          if (entry.fetchedAt < oldestTime) {
+            oldestTime = entry.fetchedAt;
+            oldestKey = key;
+          }
+        }
+        if (oldestKey !== undefined) convCache.delete(oldestKey);
+      }
       convCache.set(conversationId, { conv, memories, fetchedAt: Date.now() });
     }
     return { conv, memories };
@@ -315,9 +328,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       // Process attachments (download text files, describe others)
       const attachments = msg.attachments ?? [];
+      logVerbose(`ani: attachments count=${attachments.length} raw=${JSON.stringify(attachments).slice(0, 500)}`);
       let attachmentText = '';
       if (attachments.length > 0) {
         attachmentText = await processAttachments(attachments, serverUrl, apiKey);
+        logVerbose(`ani: attachmentText (${attachmentText.length} chars): ${attachmentText.slice(0, 300)}`);
       }
 
       if (!text.trim() && attachments.length === 0) return;
@@ -334,8 +349,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const conversationTitle = convContext?.title ?? msg.conversation?.title ?? `conv-${conversationId}`;
       const groupSystemPrompt = buildConversationSystemPrompt(convContext, memories);
 
-      logVerbose(
-        `ani: inbound conv=${conversationId} from=${senderName}(${senderId}) text="${text.slice(0, 80)}"`,
+      logger.info(
+        `ani: inbound conv=${conversationId} from=${senderName}(${senderId}) text="${text.slice(0, 80)}" attachments=${attachments.length} attachmentTextLen=${attachmentText.length}`,
       );
 
       // Route through OpenClaw agent pipeline
@@ -358,14 +373,18 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         sessionKey: route.sessionKey,
       });
 
+      const rawBody = attachmentText ? `${text}\n\n${attachmentText}` : text;
+      logVerbose(`ani: rawBody for envelope (${rawBody.length} chars): ${rawBody.slice(0, 500)}`);
+
       const body = core.channel.reply.formatAgentEnvelope({
         channel: "ANI",
         from: senderName,
         timestamp: msg.created_at ? new Date(msg.created_at).getTime() : undefined,
         previousTimestamp,
         envelope: envelopeOptions,
-        body: attachmentText ? `${text}\n\n${attachmentText}` : text,
+        body: rawBody,
       });
+      logVerbose(`ani: formatted body (${body.length} chars): ${body.slice(0, 500)}`);
 
       const ctxPayload = core.channel.reply.finalizeInboundContext({
         Body: body,
