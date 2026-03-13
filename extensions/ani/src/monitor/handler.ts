@@ -6,7 +6,14 @@ import {
 } from "openclaw/plugin-sdk";
 
 import type { CoreConfig } from "../types.js";
-import { sendAniMessage, type AniArtifact } from "./send.js";
+import {
+  sendAniMessage,
+  fetchConversation,
+  fetchConversationMemories,
+  type AniArtifact,
+  type AniConversation,
+  type AniMemory,
+} from "./send.js";
 
 export type AniWsMessage = {
   type?: string;
@@ -218,6 +225,70 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
   const startupMs = Date.now();
 
+  // Cache conversation metadata (refreshed every 5 minutes)
+  const convCache = new Map<number, { conv: AniConversation; memories: AniMemory[]; fetchedAt: number }>();
+  const CACHE_TTL = 5 * 60 * 1000;
+
+  async function getConversationContext(conversationId: number): Promise<{
+    conv: AniConversation | null;
+    memories: AniMemory[];
+  }> {
+    const cached = convCache.get(conversationId);
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+      return { conv: cached.conv, memories: cached.memories };
+    }
+    const [conv, memories] = await Promise.all([
+      fetchConversation({ serverUrl, apiKey, conversationId }),
+      fetchConversationMemories({ serverUrl, apiKey, conversationId }),
+    ]);
+    if (conv) {
+      convCache.set(conversationId, { conv, memories, fetchedAt: Date.now() });
+    }
+    return { conv, memories };
+  }
+
+  function buildConversationSystemPrompt(
+    conv: AniConversation | null,
+    memories: AniMemory[],
+  ): string {
+    const parts: string[] = [];
+
+    // Identity
+    parts.push(`You are ${selfName}.`);
+
+    // Conversation instructions (set by owner)
+    if (conv?.prompt?.trim()) {
+      parts.push(`## Instructions\n\n${conv.prompt.trim()}`);
+    }
+
+    // Conversation description
+    if (conv?.description?.trim()) {
+      parts.push(`## Conversation Description\n\n${conv.description.trim()}`);
+    }
+
+    // Participants
+    if (conv?.participants && conv.participants.length > 0) {
+      const memberLines = conv.participants.map((p) => {
+        const name = p.entity?.display_name ?? `entity-${p.entity_id}`;
+        const type = p.entity?.entity_type ?? "unknown";
+        const role = p.role ?? "member";
+        return `- ${name} (${type}, ${role})`;
+      });
+      parts.push(`## Participants\n\n${memberLines.join("\n")}`);
+    }
+
+    // Memories
+    if (memories.length > 0) {
+      const memLines = memories.map((m) => `- **${m.key}**: ${m.content}`);
+      parts.push(`## Conversation Memory\n\n${memLines.join("\n")}`);
+    }
+
+    // Artifact support instructions
+    parts.push(ANI_ARTIFACT_SYSTEM_PROMPT);
+
+    return parts.join("\n\n");
+  }
+
   return async (wsMsg: AniWsMessage) => {
     try {
       // Only handle new messages (ANI uses "message.new" with dot)
@@ -255,9 +326,13 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const senderName =
         msg.sender?.display_name ?? `entity-${senderId}`;
       const senderType = msg.sender?.entity_type ?? msg.sender_type ?? "unknown";
-      const conversationTitle = msg.conversation?.title ?? `conv-${conversationId}`;
       const messageId = String(msg.id ?? "");
       const isGroup = true; // ANI conversations are always group-like (agent-mediated)
+
+      // Fetch conversation context (cached, refreshed every 5 min)
+      const { conv: convContext, memories } = await getConversationContext(conversationId);
+      const conversationTitle = convContext?.title ?? msg.conversation?.title ?? `conv-${conversationId}`;
+      const groupSystemPrompt = buildConversationSystemPrompt(convContext, memories);
 
       logVerbose(
         `ani: inbound conv=${conversationId} from=${senderName}(${senderId}) text="${text.slice(0, 80)}"`,
@@ -306,7 +381,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         SenderId: String(senderId),
         GroupSubject: conversationTitle,
         GroupChannel: String(conversationId),
-        GroupSystemPrompt: `You are ${selfName}.\n\n${ANI_ARTIFACT_SYSTEM_PROMPT}`,
+        GroupSystemPrompt: groupSystemPrompt,
         Provider: "ani" as const,
         Surface: "ani" as const,
         MessageSid: messageId,

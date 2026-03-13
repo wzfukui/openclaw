@@ -48,6 +48,67 @@ export async function sendAniMessage(opts: {
   return { messageId: msg.id ?? 0 };
 }
 
+/** Fetch conversation details (title, description, prompt, participants). */
+export async function fetchConversation(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+}): Promise<AniConversation | null> {
+  const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}`;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${opts.apiKey}` },
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { data?: AniConversation };
+    return json.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch conversation memories. */
+export async function fetchConversationMemories(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+}): Promise<AniMemory[]> {
+  const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/memories`;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${opts.apiKey}` },
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as { data?: { memories?: AniMemory[] } };
+    return json.data?.memories ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export interface AniConversation {
+  id: number;
+  conv_type?: string;
+  title?: string;
+  description?: string;
+  prompt?: string;
+  participants?: Array<{
+    entity_id: number;
+    role?: string;
+    entity?: {
+      id: number;
+      display_name?: string;
+      entity_type?: string;
+    };
+  }>;
+}
+
+export interface AniMemory {
+  id: number;
+  key: string;
+  content: string;
+}
+
 /** Verify the API key works and return entity info. */
 export async function verifyAniConnection(opts: {
   serverUrl: string;
