@@ -6,7 +6,7 @@ import {
 } from "openclaw/plugin-sdk";
 
 import type { CoreConfig } from "../types.js";
-import { sendAniMessage } from "./send.js";
+import { sendAniMessage, type AniArtifact } from "./send.js";
 
 export type AniWsMessage = {
   type?: string;
@@ -51,6 +51,77 @@ export type AniHandlerParams = {
   selfName: string;
   accountId: string;
 };
+
+// ---------------------------------------------------------------------------
+// Artifact support: system prompt injection + outbound parsing
+// ---------------------------------------------------------------------------
+
+const ANI_ARTIFACT_SYSTEM_PROMPT = `
+## Artifact Output
+
+When you need to produce rich visual or structured content (SVG graphics, HTML pages, diagrams, or substantial code blocks), wrap the output in an <artifact> tag so it can be rendered interactively in the chat UI.
+
+Format:
+<artifact type="TYPE" title="TITLE" language="LANG">
+CONTENT
+</artifact>
+
+Supported types:
+- html  — HTML/SVG content (including inline CSS/JS). Use this for charts, diagrams drawn as SVG, interactive widgets.
+- code  — Source code. Set language="python" (or js, go, sql, etc.) for syntax highlighting.
+- mermaid — Mermaid diagram markup (flowchart, sequence, gantt, etc.).
+
+Rules:
+- Only use <artifact> for content that benefits from rendering (SVG, HTML, mermaid, long code). Short inline code snippets should stay as normal markdown.
+- Always provide a descriptive title.
+- For SVG, output the full <svg> element inside type="html". Use viewBox (not fixed width/height) so it scales responsively. Ensure all text labels and data values are fully visible with no overlap — add enough vertical spacing between rows (min 40px per row for bar charts).
+- You may include a brief text explanation before or after the artifact tag.
+- Do NOT nest artifact tags.
+`.trim();
+
+/**
+ * Parse <artifact> tags from model reply text.
+ * Returns an array of { before, artifact, after } segments.
+ */
+function parseArtifacts(text: string): Array<{
+  textBefore: string;
+  artifact?: AniArtifact;
+  raw?: string;
+}> {
+  const TAG_RE = /<artifact\s+type="(?<type>[^"]+)"(?:\s+title="(?<title>[^"]*)")?(?:\s+language="(?<lang>[^"]*)")?\s*>\n?(?<source>[\s\S]*?)\n?<\/artifact>/g;
+
+  const segments: Array<{ textBefore: string; artifact?: AniArtifact; raw?: string }> = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(TAG_RE)) {
+    const before = text.slice(lastIndex, match.index);
+    const artType = match.groups?.type ?? "html";
+    const mappedType: AniArtifact["artifact_type"] =
+      artType === "mermaid" ? "mermaid" :
+      artType === "code" ? "code" :
+      artType === "image" ? "image" : "html";
+
+    segments.push({
+      textBefore: before,
+      artifact: {
+        artifact_type: mappedType,
+        source: match.groups?.source ?? "",
+        title: match.groups?.title || undefined,
+        language: match.groups?.lang || undefined,
+      },
+      raw: match[0],
+    });
+    lastIndex = (match.index ?? 0) + match[0].length;
+  }
+
+  // Remaining text after last artifact (or entire text if no artifacts found)
+  const trailing = text.slice(lastIndex);
+  if (trailing.trim() || segments.length === 0) {
+    segments.push({ textBefore: trailing });
+  }
+
+  return segments;
+}
 
 /**
  * Creates a handler function for incoming ANI WebSocket messages.
@@ -148,6 +219,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         SenderId: String(senderId),
         GroupSubject: conversationTitle,
         GroupChannel: String(conversationId),
+        GroupSystemPrompt: ANI_ARTIFACT_SYSTEM_PROMPT,
         Provider: "ani" as const,
         Surface: "ani" as const,
         MessageSid: messageId,
@@ -185,6 +257,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       let didSendReply = false;
 
+      // Buffer all deliver chunks, then flush after dispatch completes.
+      // This is necessary because the dispatcher may call deliver multiple
+      // times with partial text, splitting an <artifact> tag across calls.
+      const replyBuffer: string[] = [];
+
       const { dispatcher, replyOptions, markDispatchIdle } =
         core.channel.reply.createReplyDispatcherWithTyping({
           responsePrefix: prefixContext.responsePrefix,
@@ -192,21 +269,9 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
           deliver: async (payload) => {
             const replyText = payload.text ?? "";
-            if (!replyText.trim()) return;
-
-            // Chunk long replies
-            const chunks = core.channel.text.chunkMarkdownText(replyText, textLimit);
-            for (const chunk of chunks.length > 0 ? chunks : [replyText]) {
-              const trimmed = chunk.trim();
-              if (!trimmed) continue;
-              await sendAniMessage({
-                serverUrl,
-                apiKey,
-                conversationId,
-                text: trimmed,
-              });
+            if (replyText.trim()) {
+              replyBuffer.push(replyText);
             }
-            didSendReply = true;
           },
           onError: (err, info) => {
             runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
@@ -227,6 +292,44 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       markDispatchIdle();
 
       if (queuedFinal) didSendReply = true;
+
+      // Flush buffered reply: reassemble full text, then parse artifacts
+      if (replyBuffer.length > 0) {
+        const fullReply = replyBuffer.join("\n");
+        const segments = parseArtifacts(fullReply);
+        const hasArtifacts = segments.some((s) => s.artifact);
+
+        if (hasArtifacts) {
+          for (const seg of segments) {
+            const plainText = seg.textBefore.trim();
+            if (plainText) {
+              const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
+              for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
+                const trimmed = chunk.trim();
+                if (!trimmed) continue;
+                await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed });
+              }
+            }
+            if (seg.artifact) {
+              await sendAniMessage({
+                serverUrl,
+                apiKey,
+                conversationId,
+                text: seg.artifact.title ?? "Artifact",
+                artifact: seg.artifact,
+              });
+            }
+          }
+        } else {
+          const chunks = core.channel.text.chunkMarkdownText(fullReply, textLimit);
+          for (const chunk of chunks.length > 0 ? chunks : [fullReply]) {
+            const trimmed = chunk.trim();
+            if (!trimmed) continue;
+            await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed });
+          }
+        }
+        didSendReply = true;
+      }
 
       if (didSendReply) {
         const preview = text.replace(/\s+/g, " ").slice(0, 160);

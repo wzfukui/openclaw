@@ -1,21 +1,43 @@
+/** Artifact payload for ANI structured content. */
+export interface AniArtifact {
+  artifact_type: "html" | "code" | "mermaid" | "image";
+  source: string;
+  title?: string;
+  language?: string;
+}
+
 /** Send a message to an ANI conversation via REST API. */
 export async function sendAniMessage(opts: {
   serverUrl: string;
   apiKey: string;
   conversationId: number;
   text: string;
+  /** If provided, sends as content_type "artifact" instead of plain text. */
+  artifact?: AniArtifact;
 }): Promise<{ messageId: number }> {
   const url = `${opts.serverUrl}/api/v1/messages/send`;
+
+  const payload = opts.artifact
+    ? {
+        conversation_id: opts.conversationId,
+        content_type: "artifact",
+        layers: {
+          summary: opts.text,
+          data: opts.artifact,
+        },
+      }
+    : {
+        conversation_id: opts.conversationId,
+        layers: { summary: opts.text },
+      };
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${opts.apiKey}`,
     },
-    body: JSON.stringify({
-      conversation_id: opts.conversationId,
-      layers: { summary: opts.text },
-    }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
