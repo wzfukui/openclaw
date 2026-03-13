@@ -21,8 +21,9 @@ export async function sendAniMessage(opts: {
     const body = await res.text().catch(() => "");
     throw new Error(`ANI send failed (${res.status}): ${body}`);
   }
-  const data = (await res.json()) as { id?: number };
-  return { messageId: data.id ?? 0 };
+  const json = (await res.json()) as { data?: { id?: number }; id?: number };
+  const msg = json.data ?? json;
+  return { messageId: msg.id ?? 0 };
 }
 
 /** Verify the API key works and return entity info. */
@@ -38,14 +39,17 @@ export async function verifyAniConnection(opts: {
     const body = await res.text().catch(() => "");
     throw new Error(`ANI /me failed (${res.status}): ${body}`);
   }
-  const data = (await res.json()) as {
+  const json = (await res.json()) as {
+    data?: { id?: number; display_name?: string; entity_type?: string };
     id?: number;
     display_name?: string;
     entity_type?: string;
   };
+  // ANI wraps response in { data: { ... }, ok: true }
+  const entity = json.data ?? json;
   return {
-    entityId: data.id ?? 0,
-    name: data.display_name ?? "unknown",
-    entityType: data.entity_type ?? "bot",
+    entityId: entity.id ?? 0,
+    name: entity.display_name ?? "unknown",
+    entityType: entity.entity_type ?? "bot",
   };
 }

@@ -104,9 +104,14 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
       }, PING_INTERVAL_MS);
     });
 
+    ws.on("pong", () => {
+      logVerbose("ani: pong received");
+    });
+
     ws.on("message", (data) => {
       try {
         const raw = typeof data === "string" ? data : data.toString("utf-8");
+        logger.info(`ani: WS message received: ${raw.slice(0, 200)}`);
         const msg = JSON.parse(raw);
         handleMessage(msg).catch((err) => {
           runtime.error?.(`ani: handler error: ${String(err)}`);

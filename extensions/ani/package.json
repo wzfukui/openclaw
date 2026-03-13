@@ -27,6 +27,9 @@
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
   "devDependencies": {
     "openclaw": "workspace:*",
     "@types/ws": "^8.5.13"

@@ -10,8 +10,8 @@ import { sendAniMessage } from "./send.js";
 
 export type AniWsMessage = {
   type?: string;
-  // message_new payload
-  message?: {
+  // ANI wraps payload in `data`
+  data?: {
     id?: number;
     conversation_id?: number;
     sender_id?: number;
@@ -22,17 +22,17 @@ export type AniWsMessage = {
       data?: unknown;
     };
     created_at?: string;
-  };
-  // sender entity info (enriched by ANI server)
-  sender?: {
-    id?: number;
-    display_name?: string;
-    entity_type?: string;
-  };
-  // conversation info
-  conversation?: {
-    id?: number;
-    title?: string;
+    // sender entity info (enriched by ANI server)
+    sender?: {
+      id?: number;
+      display_name?: string;
+      entity_type?: string;
+    };
+    // conversation info
+    conversation?: {
+      id?: number;
+      title?: string;
+    };
   };
 };
 
@@ -75,13 +75,13 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
   return async (wsMsg: AniWsMessage) => {
     try {
-      // Only handle new messages
-      if (wsMsg.type !== "message_new") {
+      // Only handle new messages (ANI uses "message.new" with dot)
+      if (wsMsg.type !== "message.new") {
         logVerbose(`ani: ignoring ws event type=${wsMsg.type ?? "unknown"}`);
         return;
       }
 
-      const msg = wsMsg.message;
+      const msg = wsMsg.data;
       if (!msg) return;
 
       // Skip own messages
@@ -95,9 +95,9 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       const senderId = msg.sender_id ?? 0;
       const senderName =
-        wsMsg.sender?.display_name ?? `entity-${senderId}`;
-      const senderType = wsMsg.sender?.entity_type ?? msg.sender_type ?? "unknown";
-      const conversationTitle = wsMsg.conversation?.title ?? `conv-${conversationId}`;
+        msg.sender?.display_name ?? `entity-${senderId}`;
+      const senderType = msg.sender?.entity_type ?? msg.sender_type ?? "unknown";
+      const conversationTitle = msg.conversation?.title ?? `conv-${conversationId}`;
       const messageId = String(msg.id ?? "");
       const isGroup = true; // ANI conversations are always group-like (agent-mediated)
 
