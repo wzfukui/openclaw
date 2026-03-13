@@ -1,0 +1,11 @@
+{
+  "id": "ani",
+  "channels": [
+    "ani"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

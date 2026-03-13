@@ -1,0 +1,34 @@
+{
+  "name": "@openclaw/ani",
+  "version": "2026.3.9",
+  "type": "module",
+  "description": "ANI Agent-Native IM channel plugin",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "ani",
+      "label": "Agent-Native IM",
+      "selectionLabel": "Agent-Native IM (plugin)",
+      "docsPath": "/channels/ani",
+      "docsLabel": "ani",
+      "blurb": "Agent-Native IM — messaging platform built for AI agents.",
+      "order": 80,
+      "quickstartAllowFrom": false
+    },
+    "install": {
+      "npmSpec": "@openclaw/ani",
+      "localPath": "extensions/ani",
+      "defaultChoice": "local"
+    }
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*",
+    "@types/ws": "^8.5.13"
+  }
+}
