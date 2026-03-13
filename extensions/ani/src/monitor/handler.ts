@@ -226,8 +226,13 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         return;
       }
 
-      const msg = wsMsg.data;
+      let msg = wsMsg.data;
       if (!msg) return;
+
+      // Handle enriched WS format (mention_with_context): { message, context_messages }
+      if (!msg.layers && (msg as any).message) {
+        msg = (msg as any).message;
+      }
 
       // Skip own messages
       if (msg.sender_id === selfEntityId) return;
@@ -301,7 +306,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         SenderId: String(senderId),
         GroupSubject: conversationTitle,
         GroupChannel: String(conversationId),
-        GroupSystemPrompt: ANI_ARTIFACT_SYSTEM_PROMPT,
+        GroupSystemPrompt: `You are ${selfName}.\n\n${ANI_ARTIFACT_SYSTEM_PROMPT}`,
         Provider: "ani" as const,
         Surface: "ani" as const,
         MessageSid: messageId,
