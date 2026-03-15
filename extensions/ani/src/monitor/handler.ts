@@ -9,8 +9,6 @@ import { randomBytes } from "node:crypto";
 import type { CoreConfig } from "../types.js";
 import {
   sendAniMessage,
-  sendAniProgress,
-  sendAniTyping,
   fetchConversation,
   fetchConversationMemories,
   toggleAniReaction,
@@ -558,11 +556,6 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         });
       }
 
-      // Send typing indicator (best-effort, fire-and-forget)
-      sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: true, phase: "thinking" }).catch((err) => {
-        logVerbose(`ani: typing indicator failed for conv=${conversationId}: ${String(err)}`);
-      });
-
       // Route through OpenClaw agent pipeline
       const peerKind = isDirect ? "dm" : "channel";
       const route = core.channel.routing.resolveAgentRoute({
@@ -672,7 +665,6 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       // (broadcast via WebSocket, NOT stored in DB — no empty bubbles).
       const streamId = generateStreamId();
       const replyBuffer: string[] = [];
-      let totalChars = 0;
 
       const { dispatcher, replyOptions, markDispatchIdle } =
         core.channel.reply.createReplyDispatcherWithTyping({
@@ -686,24 +678,6 @@ export function createAniMessageHandler(params: AniHandlerParams) {
             replyBuffer.push(replyText);
             totalChars += replyText.length;
             logVerbose(`ani: buffered chunk (${replyText.length} chars, total ${replyBuffer.length} chunks)`);
-
-            // Send non-persisted progress event (best-effort, fire-and-forget)
-            try {
-              const progress = Math.min(0.9, 0.1 + (replyBuffer.length * 0.05));
-              await sendAniProgress({
-                serverUrl,
-                apiKey,
-                conversationId,
-                streamId,
-                status: {
-                  phase: "generating",
-                  progress,
-                  text: `Writing... (${totalChars} chars)`,
-                },
-              });
-            } catch {
-              // Non-fatal: progress display is best-effort
-            }
           },
           onError: (err, info) => {
             runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
@@ -782,11 +756,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`);
       }
 
-      // Always clear typing indicator when done (whether reply was sent or not)
-      sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: false }).catch(() => {});
     } catch (err) {
-      // Clear typing on error too
-      sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: false }).catch(() => {});
       runtime.error?.(`ani handler error: ${String(err)}`);
     }
   };
