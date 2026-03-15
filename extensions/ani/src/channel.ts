@@ -11,7 +11,7 @@ import {
 import { AniConfigSchema } from "./config-schema.js";
 import type { CoreConfig, ResolvedAniAccount } from "./types.js";
 import { aniOutbound } from "./outbound.js";
-import { createSendFileTool } from "./tools.js";
+import { createSendFileTool, createSendWorkspaceFileTool } from "./tools.js";
 import { normalizeAniServerUrl } from "./utils.js";
 
 const meta = {
@@ -152,7 +152,7 @@ export const aniPlugin: ChannelPlugin<ResolvedAniAccount> = {
     },
   },
 
-  agentTools: () => [createSendFileTool()],
+  agentTools: () => [createSendFileTool(), createSendWorkspaceFileTool()],
 
   streaming: {
     blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
