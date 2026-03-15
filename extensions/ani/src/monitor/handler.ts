@@ -655,9 +655,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "ani");
       const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
 
-      // Typing indicator callbacks: send typing events during reply generation.
+      // Typing callbacks are no-ops — we manage typing state manually:
+      // start typing at message receive, stop typing after reply flush.
+      // Using callbacks here would cause extra "typing" events mid-reply.
       const typingCallbacks = createTypingCallbacks({
-        start: () => sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: true, phase: "generating" }).catch(() => {}),
+        start: () => Promise.resolve(),
         stop: () => Promise.resolve(),
         onStartError: () => {},
         onStopError: () => {},
