@@ -649,12 +649,10 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       let didSendReply = false;
 
-      // Streaming state: track stream_id and chunk count for progress updates.
-      // Buffer all text for artifact detection (artifacts need full text).
-      // If stream_start fails, streamId is cleared so subsequent messages are sent as regular (non-streaming).
-      let streamId: string | undefined = generateStreamId();
-      let streamChunkCount = 0;
-      let streamTotalChars = 0;
+      // Buffer all reply text for artifact detection (artifacts need full text to parse).
+      // Stream progress messages are NOT sent as persisted messages (they create empty
+      // bubbles in the UI). Instead, only the final complete reply is sent.
+      const streamId = generateStreamId();
       const replyBuffer: string[] = [];
 
       const { dispatcher, replyOptions, markDispatchIdle } =
@@ -667,58 +665,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
             if (!replyText.trim()) return;
 
             replyBuffer.push(replyText);
-            streamChunkCount++;
-            streamTotalChars += replyText.length;
-
-            // Send stream_start on first chunk, then periodic stream_delta updates.
-            // These are sent as REST messages with stream_id and status layers
-            // so the ANI frontend can show real-time progress.
-            try {
-              if (streamChunkCount === 1) {
-                // First chunk: send a progress indicator (status-only message)
-                await sendAniMessage({
-                  serverUrl,
-                  apiKey,
-                  conversationId,
-                  text: "",
-                  streamId,
-                  statusLayer: {
-                    phase: "generating",
-                    progress: 0.1,
-                    text: "Generating response...",
-                  },
-                });
-                logVerbose(`ani: stream_start sent for conv=${conversationId} streamId=${streamId}`);
-              } else if (streamChunkCount % 3 === 0) {
-                // Send periodic progress updates (every 3rd chunk to avoid spam)
-                const progress = Math.min(0.9, 0.1 + (streamChunkCount * 0.05));
-                await sendAniMessage({
-                  serverUrl,
-                  apiKey,
-                  conversationId,
-                  text: "",
-                  streamId,
-                  statusLayer: {
-                    phase: "generating",
-                    progress,
-                    text: `Writing... (${streamTotalChars} chars)`,
-                  },
-                });
-                logVerbose(`ani: stream_delta sent for conv=${conversationId} chunk=${streamChunkCount}`);
-              }
-            } catch (err) {
-              // Non-fatal: streaming progress is best-effort.
-              // If stream_start failed, clear streamId so final messages go as regular (non-streaming).
-              if (streamChunkCount === 1) {
-                streamId = undefined;
-                logger.warn(
-                  { error: String(err), conversationId },
-                  "ani: stream_start failed, falling back to non-streaming",
-                );
-              } else {
-                logVerbose(`ani: stream progress send failed: ${String(err)}`);
-              }
-            }
+            logVerbose(`ani: buffered chunk (${replyText.length} chars, total ${replyBuffer.length} chunks)`);
           },
           onError: (err, info) => {
             runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
@@ -794,7 +741,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           sessionKey: route.sessionKey,
           contextKey: `ani:message:${conversationId}:${messageId}`,
         });
-        logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${streamChunkCount}`);
+        logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`);
       }
     } catch (err) {
       runtime.error?.(`ani handler error: ${String(err)}`);
