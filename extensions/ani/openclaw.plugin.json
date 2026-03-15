@@ -36,7 +36,7 @@
   },
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
+    "additionalProperties": true,
     "properties": {
       "enabled": {
         "type": "boolean"
@@ -68,6 +68,6 @@
         "minimum": 100
       }
     },
-    "required": ["serverUrl", "apiKey"]
+    "required": []
   }
 }
