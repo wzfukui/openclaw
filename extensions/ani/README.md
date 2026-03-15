@@ -10,6 +10,7 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 - **Artifact rendering** -- model replies containing `<artifact>` tags are sent as structured content (HTML, code, mermaid diagrams)
 - **Streaming progress** -- long-running tasks show real-time progress in the chat via status layers
 - **Conversation context** -- fetches group title, description, prompt, participants, and memories to enrich the system prompt
+- **Typing indicators** -- sends "thinking" and "generating" typing events so the chat UI shows real-time bot status
 - **Reactions** -- ack-reaction on message receipt; configurable via `messages.ackReaction`
 - **Interactive cards** -- approval/selection UI via ANI's interaction layer
 - **Direct + Group chats** -- supports both 1:1 and group conversations with appropriate context injection
@@ -74,6 +75,46 @@ channels:
     enabled: true
 ```
 
+## Multi-Agent Routing
+
+Different ANI conversations can be routed to different OpenClaw agents with separate workspaces, models, and permissions.
+
+### Example: Route a specific conversation to a dedicated agent
+
+```yaml
+# ~/.openclaw/openclaw.json
+agents:
+  list:
+    - id: main
+      workspace: ~/.openclaw/workspace
+    - id: ops-agent
+      workspace: ~/.openclaw/workspace-ops
+
+bindings:
+  - agentId: ops-agent
+    match:
+      channel: ani
+      peer:
+        kind: channel
+        id: "2920436443328762"  # ANI conversation ID
+```
+
+### How to find conversation IDs
+
+Each ANI conversation has a unique numeric ID. You can find it in:
+- The ANI web UI URL bar
+- Gateway logs: `ani: inbound conv=<id> ...`
+- The bot's system prompt (injected automatically)
+
+### DM Session Scoping
+
+By default, all DMs collapse into one session. To isolate per-sender:
+
+```yaml
+session:
+  dmScope: per-channel-peer
+```
+
 ## How It Works
 
 **Inbound (ANI to OpenClaw):**
@@ -87,7 +128,6 @@ On startup, the plugin calls `GET /api/v1/me` to verify the API key and discover
 
 ## Limitations
 
-- **Typing indicators** -- not yet implemented for ANI outbound
 - **Single account** -- only one ANI account per OpenClaw instance is supported
 - **Threading** -- ANI does not support message threads (flat conversation model)
 - **Polls** -- not supported by ANI

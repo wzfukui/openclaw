@@ -10,6 +10,7 @@ import type { CoreConfig } from "../types.js";
 import {
   sendAniMessage,
   sendAniProgress,
+  sendAniTyping,
   fetchConversation,
   fetchConversationMemories,
   toggleAniReaction,
@@ -408,11 +409,16 @@ export function createAniMessageHandler(params: AniHandlerParams) {
   function buildConversationSystemPrompt(
     conv: AniConversation | null,
     memories: AniMemory[],
+    conversationId: number,
   ): string {
     const parts: string[] = [];
 
     // Identity
     parts.push(`You are ${selfName}.`);
+
+    // Current conversation context
+    const convType = conv?.conv_type ?? "group";
+    parts.push(`## Current Conversation\n\nConversation ID: ${conversationId}\nType: ${convType}`);
 
     // Conversation instructions (set by owner)
     if (conv?.prompt?.trim()) {
@@ -454,10 +460,14 @@ export function createAniMessageHandler(params: AniHandlerParams) {
   function buildDirectSystemPrompt(
     conv: AniConversation | null,
     memories: AniMemory[],
+    conversationId: number,
   ): string {
     const parts: string[] = [];
 
     parts.push(`You are ${selfName}.`);
+
+    // Current conversation context
+    parts.push(`## Current Conversation\n\nConversation ID: ${conversationId}\nType: direct`);
 
     if (conv?.prompt?.trim()) {
       parts.push(`## Instructions\n\n${conv.prompt.trim()}`);
@@ -532,8 +542,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       // For direct conversations, skip the full group system prompt (no participants list,
       // no group description injection) -- just use identity + instructions + memories.
       const groupSystemPrompt = isDirect
-        ? buildDirectSystemPrompt(convContext, memories)
-        : buildConversationSystemPrompt(convContext, memories);
+        ? buildDirectSystemPrompt(convContext, memories, conversationId)
+        : buildConversationSystemPrompt(convContext, memories, conversationId);
 
       logger.info(
         `ani: inbound conv=${conversationId} type=${convType} from=${senderName}(${senderId}) attachments=${attachments.length} hasText=${Boolean(text.trim())}`,
@@ -547,6 +557,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           logVerbose(`ani: ack-reaction failed for msg=${msg.id}: ${String(err)}`);
         });
       }
+
+      // Send typing indicator (best-effort, fire-and-forget)
+      sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: true, phase: "thinking" }).catch((err) => {
+        logVerbose(`ani: typing indicator failed for conv=${conversationId}: ${String(err)}`);
+      });
 
       // Route through OpenClaw agent pipeline
       const peerKind = isDirect ? "dm" : "channel";
@@ -640,9 +655,9 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "ani");
       const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
 
-      // ANI does not support typing indicators — callbacks are no-ops.
+      // Typing indicator callbacks: send typing events during reply generation.
       const typingCallbacks = createTypingCallbacks({
-        start: () => Promise.resolve(),
+        start: () => sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: true, phase: "generating" }).catch(() => {}),
         stop: () => Promise.resolve(),
         onStartError: () => {},
         onStopError: () => {},

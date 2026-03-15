@@ -272,6 +272,39 @@ export async function sendAniProgress(opts: {
   }
 }
 
+/**
+ * Send a typing indicator via POST /conversations/:id/typing.
+ * This is NOT persisted — broadcast to WebSocket clients only.
+ * Fire-and-forget: errors are silently ignored.
+ */
+export async function sendAniTyping(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  isProcessing?: boolean;
+  phase?: string;
+}): Promise<void> {
+  const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/typing`;
+  const body: Record<string, unknown> = {};
+  if (opts.isProcessing) {
+    body.is_processing = true;
+    if (opts.phase) body.phase = opts.phase;
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${opts.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`ANI typing failed (${res.status}): ${text}`);
+  }
+}
+
 /** Toggle an emoji reaction on a message. POST /messages/:id/reactions */
 export async function toggleAniReaction(opts: {
   serverUrl: string;
