@@ -1,7 +1,8 @@
 import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
 
 import { getAniRuntime } from "./runtime.js";
-import { sendAniMessage } from "./monitor/send.js";
+import { sendAniMessage, uploadAniFile, toggleAniReaction } from "./monitor/send.js";
+import type { AniInteraction, AniAttachment } from "./monitor/send.js";
 
 /** Resolve ANI serverUrl and apiKey from config. */
 function resolveAniCredentials(): { serverUrl: string; apiKey: string } {
@@ -16,7 +17,7 @@ function resolveAniCredentials(): { serverUrl: string; apiKey: string } {
 }
 
 /** Parse conversation ID from target string like "ani:conv:123" or "123". */
-function parseConversationId(to: string): number {
+export function parseConversationId(to: string): number {
   const cleaned = to
     .replace(/^ani:/i, "")
     .replace(/^conv:/i, "")
@@ -29,16 +30,65 @@ function parseConversationId(to: string): number {
   return num;
 }
 
+/**
+ * Send a text message with optional mentions and interaction card.
+ * The `mentions` and `interaction` fields map directly to the ANI backend's
+ * message send API (POST /api/v1/messages/send).
+ */
+export async function sendAniTextWithExtras(opts: {
+  to: string;
+  text: string;
+  mentions?: number[];
+  interaction?: AniInteraction;
+}): Promise<{ channel: string; messageId: string; roomId: string }> {
+  const { serverUrl, apiKey } = resolveAniCredentials();
+  const conversationId = parseConversationId(opts.to);
+  const result = await sendAniMessage({
+    serverUrl,
+    apiKey,
+    conversationId,
+    text: opts.text,
+    mentions: opts.mentions,
+    interaction: opts.interaction,
+  });
+  return {
+    channel: "ani",
+    messageId: String(result.messageId),
+    roomId: String(conversationId),
+  };
+}
+
+/**
+ * Send an ack-reaction (emoji) on a specific ANI message.
+ * Uses the toggle endpoint: POST /api/v1/messages/:id/reactions
+ */
+export async function sendAniAckReaction(messageId: number, emoji: string): Promise<void> {
+  const { serverUrl, apiKey } = resolveAniCredentials();
+  await toggleAniReaction({ serverUrl, apiKey, messageId, emoji });
+}
+
 export const aniOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: (text, limit) => getAniRuntime().channel.text.chunkMarkdownText(text, limit),
   chunkerMode: "markdown",
   textChunkLimit: 4000,
 
-  sendText: async ({ to, text }) => {
+  sendText: async ({ to, text, mentions }) => {
+    // Pass through mentions if the OpenClaw context provides them.
+    // OpenClaw may pass mentions as an array of string IDs; convert to numbers.
+    const mentionIds = Array.isArray(mentions)
+      ? mentions.map((m) => typeof m === "number" ? m : Number.parseInt(String(m), 10)).filter((n) => !Number.isNaN(n) && n > 0)
+      : undefined;
+
     const { serverUrl, apiKey } = resolveAniCredentials();
     const conversationId = parseConversationId(to);
-    const result = await sendAniMessage({ serverUrl, apiKey, conversationId, text });
+    const result = await sendAniMessage({
+      serverUrl,
+      apiKey,
+      conversationId,
+      text,
+      mentions: mentionIds,
+    });
     return {
       channel: "ani",
       messageId: String(result.messageId),
@@ -46,11 +96,88 @@ export const aniOutbound: ChannelOutboundAdapter = {
     };
   },
 
-  sendMedia: async ({ to, text }) => {
-    // MVP: send text portion only; media upload not yet supported
+  sendMedia: async ({ to, text, mediaUrl }) => {
     const { serverUrl, apiKey } = resolveAniCredentials();
     const conversationId = parseConversationId(to);
-    const result = await sendAniMessage({ serverUrl, apiKey, conversationId, text: text ?? "" });
+
+    let attachments: AniAttachment[] | undefined;
+
+    if (mediaUrl) {
+      try {
+        // Download media from the provided URL
+        const mediaRes = await fetch(mediaUrl);
+        if (!mediaRes.ok) {
+          throw new Error(`Failed to download media (${mediaRes.status})`);
+        }
+
+        const contentType = mediaRes.headers.get("content-type") ?? "application/octet-stream";
+        const buffer = new Uint8Array(await mediaRes.arrayBuffer());
+
+        // Derive filename from URL path or use a fallback
+        let filename = "file";
+        try {
+          const urlPath = new URL(mediaUrl).pathname;
+          const lastSegment = urlPath.split("/").pop();
+          if (lastSegment && lastSegment.includes(".")) {
+            filename = lastSegment;
+          }
+        } catch {
+          // URL parsing failed; keep default filename
+        }
+
+        // Upload to ANI backend
+        const uploaded = await uploadAniFile({
+          serverUrl,
+          apiKey,
+          buffer,
+          filename,
+        });
+
+        // Determine attachment type from MIME
+        let attachType = "file";
+        if (contentType.startsWith("image/")) attachType = "image";
+        else if (contentType.startsWith("audio/")) attachType = "audio";
+        else if (contentType.startsWith("video/")) attachType = "video";
+
+        attachments = [
+          {
+            type: attachType,
+            url: uploaded.url,
+            filename: uploaded.filename,
+            mime_type: contentType,
+            size: uploaded.size,
+          },
+        ];
+      } catch (err) {
+        // If media upload fails, fall back to sending text with a link
+        const fallbackText = text
+          ? `${text}\n\n[Media: ${mediaUrl}]`
+          : `[Media: ${mediaUrl}]`;
+        const result = await sendAniMessage({
+          serverUrl,
+          apiKey,
+          conversationId,
+          text: fallbackText,
+        });
+        return {
+          channel: "ani",
+          messageId: String(result.messageId),
+          roomId: String(conversationId),
+        };
+      }
+    }
+
+    // Determine content type from first attachment
+    const contentType = attachments?.[0]?.type;
+
+    const result = await sendAniMessage({
+      serverUrl,
+      apiKey,
+      conversationId,
+      text: text ?? "",
+      attachments,
+      contentType,
+    });
     return {
       channel: "ani",
       messageId: String(result.messageId),

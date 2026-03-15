@@ -5,11 +5,14 @@ import {
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
+import { randomBytes } from "node:crypto";
+
 import type { CoreConfig } from "../types.js";
 import {
   sendAniMessage,
   fetchConversation,
   fetchConversationMemories,
+  toggleAniReaction,
   type AniArtifact,
   type AniConversation,
   type AniMemory,
@@ -35,10 +38,14 @@ export type AniWsMessage = {
       display_name?: string;
       entity_type?: string;
     };
+    // Mentions: entity IDs mentioned in this message
+    mentions?: number[];
+    // Interaction layer (approval/selection cards)
     // conversation info
     conversation?: {
       id?: number;
       title?: string;
+      conv_type?: string;
     };
     attachments?: Array<{
       type?: string;
@@ -99,7 +106,7 @@ Rules:
  * Parse <artifact> tags from model reply text.
  * Returns an array of { before, artifact, after } segments.
  */
-function parseArtifacts(text: string): Array<{
+export function parseArtifacts(text: string): Array<{
   textBefore: string;
   artifact?: AniArtifact;
   raw?: string;
@@ -147,7 +154,7 @@ const TEXT_MIME_PREFIXES = ['text/', 'application/json', 'application/xml', 'app
 const TEXT_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml', '.log', '.toml', '.ini', '.cfg', '.conf', '.sh', '.py', '.js', '.ts', '.go', '.rs', '.sql'];
 const MAX_TEXT_FILE_SIZE = 102400; // 100KB
 
-function isTextFile(mimeType?: string, filename?: string): boolean {
+export function isTextFile(mimeType?: string, filename?: string): boolean {
   if (mimeType && TEXT_MIME_PREFIXES.some(p => mimeType.startsWith(p))) return true;
   if (filename) {
     const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
@@ -163,6 +170,59 @@ function formatFileSize(bytes?: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+/** Classify a MIME type into a human-readable category. */
+function classifyMime(mimeType?: string): { category: string; label: string } {
+  if (!mimeType) return { category: "file", label: "unknown type" };
+  if (mimeType.startsWith("image/")) {
+    const fmt = mimeType.replace("image/", "").toUpperCase();
+    return { category: "image", label: `${fmt} image` };
+  }
+  if (mimeType.startsWith("audio/")) {
+    const fmt = mimeType.replace("audio/", "").toUpperCase();
+    return { category: "audio", label: `${fmt} audio` };
+  }
+  if (mimeType.startsWith("video/")) {
+    const fmt = mimeType.replace("video/", "").toUpperCase();
+    return { category: "video", label: `${fmt} video` };
+  }
+  if (mimeType === "application/pdf") return { category: "document", label: "PDF document" };
+  if (mimeType.includes("word") || mimeType.includes("document")) return { category: "document", label: "Word document" };
+  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return { category: "document", label: "Excel spreadsheet" };
+  if (mimeType.includes("powerpoint") || mimeType.includes("presentation")) return { category: "document", label: "PowerPoint presentation" };
+  if (mimeType === "application/zip") return { category: "archive", label: "ZIP archive" };
+  if (mimeType.includes("tar") || mimeType.includes("gzip")) return { category: "archive", label: "compressed archive" };
+  return { category: "file", label: mimeType };
+}
+
+/** Format an attachment description with category-specific prefix and download URL. */
+function formatAttachmentDescription(
+  filename: string,
+  mimeType: string | undefined,
+  size: number | undefined,
+  downloadUrl: string | undefined,
+  duration?: number,
+): string {
+  const { category, label } = classifyMime(mimeType);
+  const sizeStr = formatFileSize(size);
+  const durationStr = duration ? `, ${duration}s` : "";
+  const urlStr = downloadUrl ? ` — download: ${downloadUrl}` : "";
+
+  switch (category) {
+    case "image":
+      return `[Image attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+    case "document":
+      return `[Document attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+    case "audio":
+      return `[Audio attached: ${filename} (${label}${durationStr}, ${sizeStr})${urlStr}]`;
+    case "video":
+      return `[Video attached: ${filename} (${label}${durationStr}, ${sizeStr})${urlStr}]`;
+    case "archive":
+      return `[Archive attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+    default:
+      return `[File attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+  }
+}
+
 async function processAttachments(
   attachments: NonNullable<NonNullable<AniWsMessage['data']>['attachments']>,
   serverUrl: string,
@@ -175,13 +235,14 @@ async function processAttachments(
     const url = att.url;
 
     if (!url) {
-      parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown type'}, ${formatFileSize(att.size)})]`);
+      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, undefined, att.duration));
       continue;
     }
 
     // Build full URL (ANI uses relative paths like /files/...)
     const fullUrl = url.startsWith('http') ? url : `${serverUrl}${url}`;
 
+    // For text files small enough, download and inline the content
     if (isTextFile(att.mime_type, att.filename) && (att.size ?? 0) <= MAX_TEXT_FILE_SIZE) {
       try {
         const res = await fetch(fullUrl, {
@@ -191,23 +252,39 @@ async function processAttachments(
           const content = await res.text();
           parts.push(`--- Attached file: ${filename} ---\n${content}\n--- End of file ---`);
         } else {
-          parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown'}, ${formatFileSize(att.size)}) — could not download]`);
+          parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
         }
       } catch {
-        parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown'}, ${formatFileSize(att.size)}) — download failed]`);
+        parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
       }
     } else {
-      parts.push(`[Attachment: ${filename} (${att.mime_type || 'unknown type'}, ${formatFileSize(att.size)})]`);
+      // Non-text or large files: provide a rich description with download URL
+      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
     }
   }
 
   return parts.join('\n\n');
 }
 
+// ---------------------------------------------------------------------------
+// Streaming helpers
+// ---------------------------------------------------------------------------
+
+/** Generate a short random stream ID. */
+function generateStreamId(): string {
+  return `stream-${randomBytes(6).toString("hex")}`;
+}
+
 /**
  * Creates a handler function for incoming ANI WebSocket messages.
  * Only handles `message_new` events, routes them through the OpenClaw
  * AI agent pipeline, and delivers replies via ANI REST API.
+ *
+ * Phase 2: Replies are streamed incrementally. On the first chunk a
+ * stream_start message is sent with a generated stream_id. Subsequent
+ * chunks become stream_delta messages with progress status layers.
+ * The final flush sends a stream_end message (persisted by the backend).
+ * Artifacts are still buffered and sent only in the final flush.
  */
 export function createAniMessageHandler(params: AniHandlerParams) {
   const {
@@ -302,6 +379,32 @@ export function createAniMessageHandler(params: AniHandlerParams) {
     return parts.join("\n\n");
   }
 
+  /**
+   * Build a lighter system prompt for direct (1:1) conversations.
+   * Skips participant list and group description since there are only two entities.
+   */
+  function buildDirectSystemPrompt(
+    conv: AniConversation | null,
+    memories: AniMemory[],
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(`You are ${selfName}.`);
+
+    if (conv?.prompt?.trim()) {
+      parts.push(`## Instructions\n\n${conv.prompt.trim()}`);
+    }
+
+    if (memories.length > 0) {
+      const memLines = memories.map((m) => `- **${m.key}**: ${m.content}`);
+      parts.push(`## Conversation Memory\n\n${memLines.join("\n")}`);
+    }
+
+    parts.push(ANI_ARTIFACT_SYSTEM_PROMPT);
+
+    return parts.join("\n\n");
+  }
+
   return async (wsMsg: AniWsMessage) => {
     try {
       // Only handle new messages (ANI uses "message.new" with dot)
@@ -342,23 +445,42 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         msg.sender?.display_name ?? `entity-${senderId}`;
       const senderType = msg.sender?.entity_type ?? msg.sender_type ?? "unknown";
       const messageId = String(msg.id ?? "");
-      const isGroup = true; // ANI conversations are always group-like (agent-mediated)
 
       // Fetch conversation context (cached, refreshed every 5 min)
       const { conv: convContext, memories } = await getConversationContext(conversationId);
       const conversationTitle = convContext?.title ?? msg.conversation?.title ?? `conv-${conversationId}`;
-      const groupSystemPrompt = buildConversationSystemPrompt(convContext, memories);
+
+      // Determine if this is a direct (1:1) or group conversation.
+      // ANI backend supports conv_type: "direct", "group", "channel".
+      const convType = convContext?.conv_type ?? msg.conversation?.conv_type ?? "group";
+      const isDirect = convType === "direct";
+
+      // For direct conversations, skip the full group system prompt (no participants list,
+      // no group description injection) -- just use identity + instructions + memories.
+      const groupSystemPrompt = isDirect
+        ? buildDirectSystemPrompt(convContext, memories)
+        : buildConversationSystemPrompt(convContext, memories);
 
       logger.info(
-        `ani: inbound conv=${conversationId} from=${senderName}(${senderId}) text="${text.slice(0, 80)}" attachments=${attachments.length} attachmentTextLen=${attachmentText.length}`,
+        `ani: inbound conv=${conversationId} type=${convType} from=${senderName}(${senderId}) text="${text.slice(0, 80)}" attachments=${attachments.length} attachmentTextLen=${attachmentText.length}`,
       );
 
+      // Send ack-reaction if configured (confirms message receipt).
+      // Uses the OpenClaw ackReaction config pattern from messages.ackReaction.
+      const ackEmoji = cfg.messages?.ackReaction?.trim();
+      if (ackEmoji && msg.id) {
+        toggleAniReaction({ serverUrl, apiKey, messageId: msg.id, emoji: ackEmoji }).catch((err) => {
+          logVerbose(`ani: ack-reaction failed for msg=${msg.id}: ${String(err)}`);
+        });
+      }
+
       // Route through OpenClaw agent pipeline
+      const peerKind = isDirect ? "dm" : "channel";
       const route = core.channel.routing.resolveAgentRoute({
         cfg,
         channel: "ani",
         peer: {
-          kind: "channel",
+          kind: peerKind,
           id: String(conversationId),
         },
       });
@@ -386,20 +508,26 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       });
       logVerbose(`ani: formatted body (${body.length} chars): ${body.slice(0, 500)}`);
 
+      // Build context payload: direct conversations use "direct" ChatType, skip group fields.
+      const chatType = isDirect ? "direct" as const : "channel" as const;
       const ctxPayload = core.channel.reply.finalizeInboundContext({
         Body: body,
         RawBody: text,
         CommandBody: text,
-        From: `ani:channel:${conversationId}`,
+        From: isDirect ? `ani:dm:${senderId}` : `ani:channel:${conversationId}`,
         To: `ani:conv:${conversationId}`,
         SessionKey: route.sessionKey,
         AccountId: route.accountId,
-        ChatType: "channel" as const,
+        ChatType: chatType,
         ConversationLabel: senderName,
         SenderName: senderName,
         SenderId: String(senderId),
-        GroupSubject: conversationTitle,
-        GroupChannel: String(conversationId),
+        ...(isDirect
+          ? {}
+          : {
+              GroupSubject: conversationTitle,
+              GroupChannel: String(conversationId),
+            }),
         GroupSystemPrompt: groupSystemPrompt,
         Provider: "ani" as const,
         Surface: "ani" as const,
@@ -438,9 +566,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       let didSendReply = false;
 
-      // Buffer all deliver chunks, then flush after dispatch completes.
-      // This is necessary because the dispatcher may call deliver multiple
-      // times with partial text, splitting an <artifact> tag across calls.
+      // Streaming state: track stream_id and chunk count for progress updates.
+      // Buffer all text for artifact detection (artifacts need full text).
+      const streamId = generateStreamId();
+      let streamChunkCount = 0;
+      let streamTotalChars = 0;
       const replyBuffer: string[] = [];
 
       const { dispatcher, replyOptions, markDispatchIdle } =
@@ -450,8 +580,51 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
           deliver: async (payload) => {
             const replyText = payload.text ?? "";
-            if (replyText.trim()) {
-              replyBuffer.push(replyText);
+            if (!replyText.trim()) return;
+
+            replyBuffer.push(replyText);
+            streamChunkCount++;
+            streamTotalChars += replyText.length;
+
+            // Send stream_start on first chunk, then periodic stream_delta updates.
+            // These are sent as REST messages with stream_id and status layers
+            // so the ANI frontend can show real-time progress.
+            try {
+              if (streamChunkCount === 1) {
+                // First chunk: send a progress indicator (status-only message)
+                await sendAniMessage({
+                  serverUrl,
+                  apiKey,
+                  conversationId,
+                  text: "",
+                  streamId,
+                  statusLayer: {
+                    phase: "generating",
+                    progress: 0.1,
+                    text: "Generating response...",
+                  },
+                });
+                logVerbose(`ani: stream_start sent for conv=${conversationId} streamId=${streamId}`);
+              } else if (streamChunkCount % 3 === 0) {
+                // Send periodic progress updates (every 3rd chunk to avoid spam)
+                const progress = Math.min(0.9, 0.1 + (streamChunkCount * 0.05));
+                await sendAniMessage({
+                  serverUrl,
+                  apiKey,
+                  conversationId,
+                  text: "",
+                  streamId,
+                  statusLayer: {
+                    phase: "generating",
+                    progress,
+                    text: `Writing... (${streamTotalChars} chars)`,
+                  },
+                });
+                logVerbose(`ani: stream_delta sent for conv=${conversationId} chunk=${streamChunkCount}`);
+              }
+            } catch (err) {
+              // Non-fatal: streaming progress is best-effort
+              logVerbose(`ani: stream progress send failed: ${String(err)}`);
             }
           },
           onError: (err, info) => {
@@ -474,7 +647,9 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       if (queuedFinal) didSendReply = true;
 
-      // Flush buffered reply: reassemble full text, then parse artifacts
+      // Flush buffered reply: reassemble full text, then parse artifacts.
+      // The final message is sent with stream_id so the ANI frontend can
+      // associate it with the stream and replace progress indicators.
       if (replyBuffer.length > 0) {
         const fullReply = replyBuffer.join("\n");
         const segments = parseArtifacts(fullReply);
@@ -488,7 +663,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
               for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
                 const trimmed = chunk.trim();
                 if (!trimmed) continue;
-                await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed });
+                await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId });
               }
             }
             if (seg.artifact) {
@@ -498,6 +673,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                 conversationId,
                 text: seg.artifact.title ?? "Artifact",
                 artifact: seg.artifact,
+                streamId,
               });
             }
           }
@@ -506,7 +682,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           for (const chunk of chunks.length > 0 ? chunks : [fullReply]) {
             const trimmed = chunk.trim();
             if (!trimmed) continue;
-            await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed });
+            await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId });
           }
         }
         didSendReply = true;
@@ -518,7 +694,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           sessionKey: route.sessionKey,
           contextKey: `ani:message:${conversationId}:${messageId}`,
         });
-        logVerbose(`ani: delivered reply to conv=${conversationId}`);
+        logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${streamChunkCount}`);
       }
     } catch (err) {
       runtime.error?.(`ani handler error: ${String(err)}`);

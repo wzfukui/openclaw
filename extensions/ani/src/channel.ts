@@ -23,7 +23,7 @@ const meta = {
   quickstartAllowFrom: false,
 };
 
-function resolveAniAccount(params: {
+export function resolveAniAccount(params: {
   cfg: CoreConfig;
   accountId?: string;
 }): ResolvedAniAccount {
@@ -50,11 +50,11 @@ export const aniPlugin: ChannelPlugin<ResolvedAniAccount> = {
   meta,
 
   capabilities: {
-    chatTypes: ["group"],
+    chatTypes: ["group", "direct"],
     polls: false,
-    reactions: false,
+    reactions: true,
     threads: false,
-    media: false, // MVP: text only
+    media: true,
   },
 
   reload: { configPrefixes: ["channels.ani"] },
@@ -148,6 +148,10 @@ export const aniPlugin: ChannelPlugin<ResolvedAniAccount> = {
         },
       } as CoreConfig;
     },
+  },
+
+  streaming: {
+    blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
   },
 
   outbound: aniOutbound,

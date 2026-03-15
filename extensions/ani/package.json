@@ -10,10 +10,10 @@
     "channel": {
       "id": "ani",
       "label": "Agent-Native IM",
-      "selectionLabel": "Agent-Native IM (plugin)",
+      "selectionLabel": "Agent-Native IM (ANI)",
       "docsPath": "/channels/ani",
       "docsLabel": "ani",
-      "blurb": "Agent-Native IM — messaging platform built for AI agents.",
+      "blurb": "Agent-Native IM — messaging built for AI-first agent collaboration.",
       "order": 80,
       "quickstartAllowFrom": false
     },
