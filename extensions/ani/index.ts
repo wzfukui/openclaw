@@ -12,9 +12,12 @@ const plugin = {
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     setAniRuntime(api.runtime);
-    api.registerChannel({ plugin: aniPlugin });
-    // Register tool via plugin API (not agentTools) so it bypasses profile filtering
-    api.registerTool(createSendFileTool());
+    // Register tool via BOTH paths for maximum compatibility:
+    // 1. api.registerTool() — plugin tools path (resolvePluginTools)
+    // 2. agentTools on channel — channel tools path (listChannelAgentTools)
+    const sendFileTool = createSendFileTool();
+    api.registerTool(sendFileTool);
+    api.registerChannel({ plugin: { ...aniPlugin, agentTools: () => [sendFileTool] } });
   },
 };
 
