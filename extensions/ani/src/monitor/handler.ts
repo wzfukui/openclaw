@@ -267,6 +267,62 @@ async function processAttachments(
 }
 
 // ---------------------------------------------------------------------------
+// Media download: save attachments to disk for OpenClaw media pipeline
+// ---------------------------------------------------------------------------
+
+type SavedAttachment = { path: string; contentType?: string };
+
+/**
+ * Download ANI attachments and save them to OpenClaw's media directory.
+ * This enables the media-understanding pipeline (vision, audio transcription, etc.)
+ * which requires local file paths via MediaPath/MediaPaths context fields.
+ */
+async function downloadAndSaveAttachments(
+  attachments: NonNullable<NonNullable<AniWsMessage['data']>['attachments']>,
+  serverUrl: string,
+  apiKey: string,
+  saveFn: (buffer: Buffer, contentType?: string, subdir?: string, maxBytes?: number, originalFilename?: string) => Promise<{ path: string; contentType?: string }>,
+  logVerbose: (msg: string) => void,
+): Promise<SavedAttachment[]> {
+  const saved: SavedAttachment[] = [];
+
+  for (const att of attachments) {
+    const url = att.url;
+    if (!url) continue;
+
+    const fullUrl = url.startsWith('http') ? url : `${serverUrl}${url}`;
+    try {
+      const res = await fetch(fullUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) {
+        logVerbose(`ani: media download failed (${res.status}) for ${att.filename ?? url}`);
+        continue;
+      }
+
+      const buffer = Buffer.from(await res.arrayBuffer());
+      const contentType = att.mime_type ?? res.headers.get("content-type") ?? undefined;
+
+      const result = await saveFn(
+        buffer,
+        contentType,
+        "inbound",
+        10 * 1024 * 1024, // 10MB limit for save
+        att.filename ?? undefined,
+      );
+
+      saved.push({ path: result.path, contentType: result.contentType });
+      logVerbose(`ani: saved media ${att.filename ?? "file"} → ${result.path} (${result.contentType})`);
+    } catch (err) {
+      logVerbose(`ani: media save failed for ${att.filename ?? url}: ${String(err)}`);
+    }
+  }
+
+  return saved;
+}
+
+// ---------------------------------------------------------------------------
 // Streaming helpers
 // ---------------------------------------------------------------------------
 
@@ -429,13 +485,19 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       const text = msg.layers?.summary ?? msg.layers?.detail ?? "";
 
-      // Process attachments (download text files, describe others)
+      // Process attachments:
+      // 1. Download and save to disk for OpenClaw media pipeline (MediaPath/MediaType)
+      // 2. Also produce text descriptions for context (attachmentText)
       const attachments = msg.attachments ?? [];
       logVerbose(`ani: attachments count=${attachments.length} raw=${JSON.stringify(attachments).slice(0, 500)}`);
       let attachmentText = '';
+      let savedMedia: SavedAttachment[] = [];
       if (attachments.length > 0) {
+        // Save files to disk for media-understanding pipeline (vision, audio, etc.)
+        savedMedia = await downloadAndSaveAttachments(attachments, serverUrl, apiKey, core.media.saveMediaBuffer, logVerbose);
+        // Also generate text descriptions as supplementary context
         attachmentText = await processAttachments(attachments, serverUrl, apiKey);
-        logVerbose(`ani: attachmentText (${attachmentText.length} chars): ${attachmentText.slice(0, 300)}`);
+        logVerbose(`ani: attachmentText (${attachmentText.length} chars) savedMedia=${savedMedia.length}: ${attachmentText.slice(0, 300)}`);
       }
 
       if (!text.trim() && attachments.length === 0) return;
@@ -508,10 +570,15 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       });
       logVerbose(`ani: formatted body (${body.length} chars): ${body.slice(0, 500)}`);
 
+      // Build media context fields from saved attachments (for OpenClaw media pipeline)
+      const mediaPaths = savedMedia.map((m) => m.path);
+      const mediaTypes = savedMedia.map((m) => m.contentType ?? "application/octet-stream");
+
       // Build context payload: direct conversations use "direct" ChatType, skip group fields.
       const chatType = isDirect ? "direct" as const : "channel" as const;
       const ctxPayload = core.channel.reply.finalizeInboundContext({
         Body: body,
+        BodyForAgent: rawBody, // Pass the full body with inlined attachments directly to the agent
         RawBody: text,
         CommandBody: text,
         From: isDirect ? `ani:dm:${senderId}` : `ani:channel:${conversationId}`,
@@ -522,6 +589,13 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         ConversationLabel: senderName,
         SenderName: senderName,
         SenderId: String(senderId),
+        // Media fields: enable OpenClaw's media-understanding pipeline
+        ...(mediaPaths.length > 0 ? {
+          MediaPath: mediaPaths[0],
+          MediaPaths: mediaPaths,
+          MediaType: mediaTypes[0],
+          MediaTypes: mediaTypes,
+        } : {}),
         ...(isDirect
           ? {}
           : {
