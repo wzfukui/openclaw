@@ -242,6 +242,36 @@ export async function verifyAniConnection(opts: {
   };
 }
 
+/**
+ * Send a transient progress event via POST /conversations/:id/progress.
+ * This is NOT persisted to the database — broadcast to WebSocket clients only.
+ */
+export async function sendAniProgress(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  streamId: string;
+  status: { phase: string; progress: number; text: string };
+}): Promise<void> {
+  const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/progress`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${opts.apiKey}`,
+    },
+    body: JSON.stringify({
+      stream_id: opts.streamId,
+      status: opts.status,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ANI progress failed (${res.status}): ${body}`);
+  }
+}
+
 /** Toggle an emoji reaction on a message. POST /messages/:id/reactions */
 export async function toggleAniReaction(opts: {
   serverUrl: string;

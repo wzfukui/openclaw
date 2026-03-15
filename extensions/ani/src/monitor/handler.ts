@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import type { CoreConfig } from "../types.js";
 import {
   sendAniMessage,
+  sendAniProgress,
   fetchConversation,
   fetchConversationMemories,
   toggleAniReaction,
@@ -650,10 +651,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       let didSendReply = false;
 
       // Buffer all reply text for artifact detection (artifacts need full text to parse).
-      // Stream progress messages are NOT sent as persisted messages (they create empty
-      // bubbles in the UI). Instead, only the final complete reply is sent.
+      // Progress is sent via the non-persisted POST /conversations/:id/progress endpoint
+      // (broadcast via WebSocket, NOT stored in DB — no empty bubbles).
       const streamId = generateStreamId();
       const replyBuffer: string[] = [];
+      let totalChars = 0;
 
       const { dispatcher, replyOptions, markDispatchIdle } =
         core.channel.reply.createReplyDispatcherWithTyping({
@@ -665,7 +667,26 @@ export function createAniMessageHandler(params: AniHandlerParams) {
             if (!replyText.trim()) return;
 
             replyBuffer.push(replyText);
+            totalChars += replyText.length;
             logVerbose(`ani: buffered chunk (${replyText.length} chars, total ${replyBuffer.length} chunks)`);
+
+            // Send non-persisted progress event (best-effort, fire-and-forget)
+            try {
+              const progress = Math.min(0.9, 0.1 + (replyBuffer.length * 0.05));
+              await sendAniProgress({
+                serverUrl,
+                apiKey,
+                conversationId,
+                streamId,
+                status: {
+                  phase: "generating",
+                  progress,
+                  text: `Writing... (${totalChars} chars)`,
+                },
+              });
+            } catch {
+              // Non-fatal: progress display is best-effort
+            }
           },
           onError: (err, info) => {
             runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
