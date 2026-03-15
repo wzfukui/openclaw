@@ -779,7 +779,12 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         });
         logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`);
       }
+
+      // Always clear typing indicator when done (whether reply was sent or not)
+      sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: false }).catch(() => {});
     } catch (err) {
+      // Clear typing on error too
+      sendAniTyping({ serverUrl, apiKey, conversationId, isProcessing: false }).catch(() => {});
       runtime.error?.(`ani handler error: ${String(err)}`);
     }
   };
