@@ -568,7 +568,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       // Streaming state: track stream_id and chunk count for progress updates.
       // Buffer all text for artifact detection (artifacts need full text).
-      const streamId = generateStreamId();
+      // If stream_start fails, streamId is cleared so subsequent messages are sent as regular (non-streaming).
+      let streamId: string | undefined = generateStreamId();
       let streamChunkCount = 0;
       let streamTotalChars = 0;
       const replyBuffer: string[] = [];
@@ -623,7 +624,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                 logVerbose(`ani: stream_delta sent for conv=${conversationId} chunk=${streamChunkCount}`);
               }
             } catch (err) {
-              // Non-fatal: streaming progress is best-effort
+              // Non-fatal: streaming progress is best-effort.
+              // If stream_start failed, clear streamId so final messages go as regular (non-streaming).
+              if (streamChunkCount === 1) {
+                streamId = undefined;
+              }
               logVerbose(`ani: stream progress send failed: ${String(err)}`);
             }
           },

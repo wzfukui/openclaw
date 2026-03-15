@@ -149,10 +149,11 @@ export const aniOutbound: ChannelOutboundAdapter = {
           },
         ];
       } catch (err) {
-        // If media upload fails, fall back to sending text with a link
+        // If media download/upload fails, fall back to sending text with a link
+        getAniRuntime().logging?.verbose(`ani: sendMedia failed, falling back to text: ${String(err)}`);
         const fallbackText = text
-          ? `${text}\n\n[Media: ${mediaUrl}]`
-          : `[Media: ${mediaUrl}]`;
+          ? `${text}\n\n[Media link: ${mediaUrl}]`
+          : `[Media link: ${mediaUrl}]`;
         const result = await sendAniMessage({
           serverUrl,
           apiKey,

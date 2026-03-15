@@ -226,8 +226,12 @@ export async function verifyAniConnection(opts: {
   };
   // ANI wraps response in { data: { ... }, ok: true }
   const entity = json.data ?? json;
+  const entityId = entity.id ?? 0;
+  if (!entityId) {
+    throw new Error("ANI /me returned no entity ID — check API key validity");
+  }
   return {
-    entityId: entity.id ?? 0,
+    entityId,
     name: entity.display_name ?? "unknown",
     entityType: entity.entity_type ?? "bot",
   };
