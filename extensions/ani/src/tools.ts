@@ -1,9 +1,9 @@
 import { Type } from "@sinclair/typebox";
 import type { ChannelAgentTool } from "openclaw/plugin-sdk";
 
-import { getAniRuntime } from "./runtime.js";
 import { sendAniMessage, uploadAniFile } from "./monitor/send.js";
 import type { AniAttachment } from "./monitor/send.js";
+import { resolveAniCredentials, getMimeType } from "./utils.js";
 
 /**
  * Agent tool: ani_send_file
@@ -69,34 +69,8 @@ export function createSendFileTool(): ChannelAgentTool {
       }
 
       try {
-        const core = getAniRuntime();
-        const cfg = core.config.loadConfig() as {
-          channels?: { ani?: { serverUrl?: string; apiKey?: string } };
-        };
-        const serverUrl = (cfg.channels?.ani?.serverUrl ?? "").replace(/\/+$/, "");
-        const apiKey = cfg.channels?.ani?.apiKey ?? "";
-
-        if (!serverUrl || !apiKey) {
-          return {
-            content: [{ type: "text" as const, text: "Error: ANI channel not configured" }],
-          };
-        }
-
-        // Determine MIME type from extension
-        const ext = filename.includes(".")
-          ? filename.slice(filename.lastIndexOf(".")).toLowerCase()
-          : "";
-        const mimeMap: Record<string, string> = {
-          ".md": "text/markdown", ".txt": "text/plain", ".csv": "text/csv",
-          ".json": "application/json", ".xml": "application/xml",
-          ".yaml": "text/yaml", ".yml": "text/yaml",
-          ".html": "text/html", ".css": "text/css",
-          ".js": "text/javascript", ".ts": "text/typescript",
-          ".py": "text/x-python", ".go": "text/x-go",
-          ".sql": "text/x-sql", ".sh": "text/x-shellscript",
-          ".log": "text/plain", ".toml": "text/toml", ".ini": "text/plain",
-        };
-        const mimeType = mimeMap[ext] ?? "text/plain";
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        const mimeType = getMimeType(filename);
 
         // Step 1: Upload file
         const buffer = Buffer.from(content, "utf-8");

@@ -1,16 +1,14 @@
 import { format } from "node:util";
 
 import {
-  createReplyPrefixContext,
-  createTypingCallbacks,
-  logTypingFailure,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
-import type { AniConfig, CoreConfig } from "../types.js";
+import type { CoreConfig } from "../types.js";
 import { getAniRuntime } from "../runtime.js";
-import { sendAniMessage, verifyAniConnection } from "./send.js";
+import { verifyAniConnection } from "./send.js";
 import { createAniMessageHandler } from "./handler.js";
+import { normalizeAniServerUrl } from "../utils.js";
 
 export type MonitorAniOpts = {
   runtime?: RuntimeEnv;
@@ -28,7 +26,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   const aniCfg = cfg.channels?.ani;
   if (!aniCfg || aniCfg.enabled === false) return;
 
-  const serverUrl = (aniCfg.serverUrl ?? "").replace(/\/+$/, "");
+  const serverUrl = normalizeAniServerUrl(aniCfg.serverUrl);
   const apiKey = aniCfg.apiKey ?? "";
   if (!serverUrl || !apiKey) {
     throw new Error("ANI requires serverUrl and apiKey in channels.ani config");
@@ -109,16 +107,14 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
     });
 
     ws.on("message", (data) => {
-      try {
+      (async () => {
         const raw = typeof data === "string" ? data : data.toString("utf-8");
         logVerbose(`ani: WS message received: ${raw.slice(0, 200)}`);
         const msg = JSON.parse(raw);
-        handleMessage(msg).catch((err) => {
-          runtime.error?.(`ani: handler error: ${String(err)}`);
-        });
-      } catch (err) {
-        logVerbose(`ani: failed to parse WS message: ${String(err)}`);
-      }
+        await handleMessage(msg);
+      })().catch((err) => {
+        logger.warn({ error: String(err) }, "ani: WebSocket message handler error");
+      });
     });
 
     ws.on("close", (code, reason) => {

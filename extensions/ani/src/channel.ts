@@ -12,6 +12,7 @@ import { AniConfigSchema } from "./config-schema.js";
 import type { CoreConfig, ResolvedAniAccount } from "./types.js";
 import { aniOutbound } from "./outbound.js";
 import { createSendFileTool } from "./tools.js";
+import { normalizeAniServerUrl } from "./utils.js";
 
 const meta = {
   id: "ani",
@@ -31,7 +32,7 @@ export function resolveAniAccount(params: {
   const accountId = normalizeAccountId(params.accountId);
   const aniCfg = params.cfg.channels?.ani ?? {};
   const enabled = aniCfg.enabled !== false;
-  const serverUrl = (aniCfg.serverUrl ?? "").replace(/\/+$/, "");
+  const serverUrl = normalizeAniServerUrl(aniCfg.serverUrl);
   const apiKey = aniCfg.apiKey ?? "";
   const configured = Boolean(serverUrl && apiKey && !apiKey.startsWith("aimb_"));
 

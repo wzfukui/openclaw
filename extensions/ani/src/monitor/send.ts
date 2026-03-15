@@ -47,6 +47,7 @@ export async function uploadAniFile(opts: {
       Authorization: `Bearer ${opts.apiKey}`,
     },
     body: form,
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -134,6 +135,7 @@ export async function sendAniMessage(opts: {
       Authorization: `Bearer ${opts.apiKey}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -154,6 +156,7 @@ export async function fetchConversation(opts: {
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${opts.apiKey}` },
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return null;
     const json = (await res.json()) as { data?: AniConversation };
@@ -173,6 +176,7 @@ export async function fetchConversationMemories(opts: {
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${opts.apiKey}` },
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return [];
     const json = (await res.json()) as { data?: { memories?: AniMemory[] } };
@@ -213,6 +217,7 @@ export async function verifyAniConnection(opts: {
   const url = `${opts.serverUrl}/api/v1/me`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${opts.apiKey}` },
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -252,6 +257,7 @@ export async function toggleAniReaction(opts: {
       Authorization: `Bearer ${opts.apiKey}`,
     },
     body: JSON.stringify({ emoji: opts.emoji }),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");

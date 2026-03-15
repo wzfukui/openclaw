@@ -3,18 +3,7 @@ import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
 import { getAniRuntime } from "./runtime.js";
 import { sendAniMessage, uploadAniFile, toggleAniReaction } from "./monitor/send.js";
 import type { AniInteraction, AniAttachment } from "./monitor/send.js";
-
-/** Resolve ANI serverUrl and apiKey from config. */
-function resolveAniCredentials(): { serverUrl: string; apiKey: string } {
-  const core = getAniRuntime();
-  const cfg = core.config.loadConfig() as { channels?: { ani?: { serverUrl?: string; apiKey?: string } } };
-  const serverUrl = (cfg.channels?.ani?.serverUrl ?? "").replace(/\/+$/, "");
-  const apiKey = cfg.channels?.ani?.apiKey ?? "";
-  if (!serverUrl || !apiKey) {
-    throw new Error("ANI outbound: serverUrl and apiKey required");
-  }
-  return { serverUrl, apiKey };
-}
+import { resolveAniCredentials } from "./utils.js";
 
 /** Parse conversation ID from target string like "ani:conv:123" or "123". */
 export function parseConversationId(to: string): number {

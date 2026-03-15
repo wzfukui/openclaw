@@ -1,7 +1,6 @@
 import {
   createReplyPrefixContext,
   createTypingCallbacks,
-  logTypingFailure,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
@@ -247,10 +246,22 @@ async function processAttachments(
       try {
         const res = await fetch(fullUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(30_000),
         });
         if (res.ok) {
-          const content = await res.text();
-          parts.push(`--- Attached file: ${filename} ---\n${content}\n--- End of file ---`);
+          // Validate actual response size before reading body to prevent DoS
+          const contentLength = Number(res.headers.get("content-length") ?? "0");
+          if (contentLength > MAX_TEXT_FILE_SIZE) {
+            parts.push(formatAttachmentDescription(filename, att.mime_type, contentLength, fullUrl, att.duration));
+          } else {
+            const content = await res.text();
+            if (content.length > MAX_TEXT_FILE_SIZE) {
+              // Actual body exceeded limit despite header; fall back to description
+              parts.push(formatAttachmentDescription(filename, att.mime_type, content.length, fullUrl, att.duration));
+            } else {
+              parts.push(`--- Attached file: ${filename} ---\n${content}\n--- End of file ---`);
+            }
+          }
         } else {
           parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
         }
@@ -524,7 +535,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         : buildConversationSystemPrompt(convContext, memories);
 
       logger.info(
-        `ani: inbound conv=${conversationId} type=${convType} from=${senderName}(${senderId}) text="${text.slice(0, 80)}" attachments=${attachments.length} attachmentTextLen=${attachmentText.length}`,
+        `ani: inbound conv=${conversationId} type=${convType} from=${senderName}(${senderId}) attachments=${attachments.length} hasText=${Boolean(text.trim())}`,
       );
 
       // Send ack-reaction if configured (confirms message receipt).
@@ -628,14 +639,12 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "ani");
       const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
 
-      // No typing indicators for ANI (not yet supported in outbound)
+      // ANI does not support typing indicators — callbacks are no-ops.
       const typingCallbacks = createTypingCallbacks({
         start: () => Promise.resolve(),
         stop: () => Promise.resolve(),
-        onStartError: (err) =>
-          logTypingFailure({ log: logVerbose, channel: "ani", action: "start", target: String(conversationId), error: err }),
-        onStopError: (err) =>
-          logTypingFailure({ log: logVerbose, channel: "ani", action: "stop", target: String(conversationId), error: err }),
+        onStartError: () => {},
+        onStopError: () => {},
       });
 
       let didSendReply = false;
@@ -702,8 +711,13 @@ export function createAniMessageHandler(params: AniHandlerParams) {
               // If stream_start failed, clear streamId so final messages go as regular (non-streaming).
               if (streamChunkCount === 1) {
                 streamId = undefined;
+                logger.warn(
+                  { error: String(err), conversationId },
+                  "ani: stream_start failed, falling back to non-streaming",
+                );
+              } else {
+                logVerbose(`ani: stream progress send failed: ${String(err)}`);
               }
-              logVerbose(`ani: stream progress send failed: ${String(err)}`);
             }
           },
           onError: (err, info) => {
@@ -736,24 +750,31 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
         if (hasArtifacts) {
           for (const seg of segments) {
-            const plainText = seg.textBefore.trim();
-            if (plainText) {
-              const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
-              for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
-                const trimmed = chunk.trim();
-                if (!trimmed) continue;
-                await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId });
+            try {
+              const plainText = seg.textBefore.trim();
+              if (plainText) {
+                const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
+                for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
+                  const trimmed = chunk.trim();
+                  if (!trimmed) continue;
+                  await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId });
+                }
               }
-            }
-            if (seg.artifact) {
-              await sendAniMessage({
-                serverUrl,
-                apiKey,
-                conversationId,
-                text: seg.artifact.title ?? "Artifact",
-                artifact: seg.artifact,
-                streamId,
-              });
+              if (seg.artifact) {
+                await sendAniMessage({
+                  serverUrl,
+                  apiKey,
+                  conversationId,
+                  text: seg.artifact.title ?? "Artifact",
+                  artifact: seg.artifact,
+                  streamId,
+                });
+              }
+            } catch (flushErr) {
+              logger.warn(
+                { error: String(flushErr), conversationId },
+                "ani: artifact flush segment failed, continuing with remaining segments",
+              );
             }
           }
         } else {
