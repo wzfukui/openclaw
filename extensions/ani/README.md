@@ -32,7 +32,17 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
    openclaw config set channels.ani.apiKey "aim_your_permanent_key"
    ```
 
-3. Start the gateway:
+3. Enable the file-sending tool:
+
+   The plugin includes an `ani_send_file` tool that lets the AI agent create and send files (text, images, PDFs, etc.) to ANI conversations. Due to OpenClaw's tool profile allowlist, this tool must be explicitly allowed:
+
+   ```bash
+   openclaw config set tools.alsoAllow '["ani_send_file"]' --strict-json
+   ```
+
+   > **Note:** This step is required when using the `coding` or `messaging` tool profiles. If you use `tools.profile: full`, this is not needed.
+
+4. Start the gateway:
 
    ```bash
    openclaw gateway run
