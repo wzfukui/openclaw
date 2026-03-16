@@ -20,34 +20,36 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 
 ## Quick Start
 
-1. Install the plugin:
+### Option A: Install from npm (when published)
 
-   ```bash
-   openclaw plugin install @openclaw/ani
-   ```
+```bash
+openclaw plugin install @openclaw/ani
+```
 
-2. Configure your ANI credentials:
+### Option B: Install from tarball
 
-   ```bash
-   openclaw config set channels.ani.serverUrl "https://your-ani-server.com"
-   openclaw config set channels.ani.apiKey "aim_your_permanent_key"
-   ```
+```bash
+curl -LO "https://your-download-url/ani-plugin.tar.gz"
+tar xzf ani-plugin.tar.gz
+mkdir -p ~/.openclaw/extensions/ani
+cp -r ani-plugin/* ~/.openclaw/extensions/ani/
+cd ~/.openclaw/extensions/ani && npm install --omit=dev
+rm -rf ani-plugin ani-plugin.tar.gz
+```
 
-3. Enable the file-sending tool:
+### Configure
 
-   The plugin includes an `ani_send_file` tool that lets the AI agent create and send files (text, images, PDFs, etc.) to ANI conversations. Due to OpenClaw's tool profile allowlist, this tool must be explicitly allowed:
+```bash
+# 1. Set ANI server and API key (create a Bot in ANI Web to get the key)
+openclaw config set channels.ani.serverUrl "https://your-ani-server.com"
+openclaw config set channels.ani.apiKey "aim_your_api_key"
 
-   ```bash
-   openclaw config set tools.alsoAllow '["ani_send_file"]' --strict-json
-   ```
+# 2. Enable the file-sending tool (required for coding/messaging profiles)
+openclaw config set tools.alsoAllow '["ani_send_file"]' --strict-json
 
-   > **Note:** This step is required when using the `coding` or `messaging` tool profiles. If you use `tools.profile: full`, this is not needed.
-
-4. Start the gateway:
-
-   ```bash
-   openclaw gateway run
-   ```
+# 3. Start the gateway
+openclaw gateway run
+```
 
 The plugin will connect to your ANI server via WebSocket and begin handling messages.
 
