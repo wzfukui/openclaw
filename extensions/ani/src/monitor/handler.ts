@@ -530,7 +530,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const conversationId = msg.conversation_id;
       if (!conversationId) return;
 
-      const text = msg.layers?.summary ?? msg.layers?.detail ?? "";
+      // Prefer data.body (full content) over summary (may be truncated by frontend)
+      const dataBody = typeof msg.layers?.data === "object" && msg.layers?.data !== null
+        ? (msg.layers.data as Record<string, unknown>).body
+        : undefined;
+      const text = (typeof dataBody === "string" ? dataBody : null) ?? msg.layers?.summary ?? msg.layers?.detail ?? "";
 
       // Process attachments:
       // 1. Download and save to disk for OpenClaw media pipeline (MediaPath/MediaType)
