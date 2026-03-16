@@ -428,15 +428,30 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       parts.push(`## Conversation Description\n\n${conv.description.trim()}`);
     }
 
-    // Participants
+    // Participants (with entity_id for cross-bot mention/collaboration)
     if (conv?.participants && conv.participants.length > 0) {
       const memberLines = conv.participants.map((p) => {
         const name = p.entity?.display_name ?? `entity-${p.entity_id}`;
         const type = p.entity?.entity_type ?? "unknown";
         const role = p.role ?? "member";
-        return `- ${name} (${type}, ${role})`;
+        return `- ${name} (${type}, ${role}, id=${p.entity_id})`;
       });
       parts.push(`## Participants\n\n${memberLines.join("\n")}`);
+    }
+
+    // Multi-bot group behavior: teach the agent when to stay silent
+    if (conv?.participants && conv.participants.filter((p) => p.entity?.entity_type === "bot").length > 1) {
+      parts.push([
+        "## Group Behavior",
+        "",
+        "This is a multi-bot group. Follow these rules:",
+        "- If the message explicitly @mentions you by name and asks you to do something → respond normally.",
+        "- If the message @mentions another bot (not you) → reply with exactly [SILENT] and nothing else.",
+        "- If another bot posted a message and did NOT @mention you → reply with exactly [SILENT] and nothing else.",
+        "- If another bot @mentions you in their message (handing off a task to you) → respond normally.",
+        "- When you complete a task and need to hand off to another bot, @mention them by name and include their entity_id in your message.",
+        "- [SILENT] means you choose not to speak. The system will suppress the message entirely.",
+      ].join("\n"));
     }
 
     // Memories
@@ -704,6 +719,12 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       // associate it with the stream and replace progress indicators.
       if (replyBuffer.length > 0) {
         const fullReply = replyBuffer.join("\n");
+
+        // Multi-bot silence: if the agent chose not to speak, suppress the reply entirely
+        if (fullReply.trim() === "[SILENT]" || fullReply.trim().startsWith("[SILENT]")) {
+          logVerbose(`ani: agent chose [SILENT] for conv=${conversationId}, suppressing reply`);
+        } else {
+
         const segments = parseArtifacts(fullReply);
         const hasArtifacts = segments.some((s) => s.artifact);
 
@@ -745,6 +766,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           }
         }
         didSendReply = true;
+      } // end of else (not SILENT)
       }
 
       if (didSendReply) {
