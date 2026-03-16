@@ -444,13 +444,21 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       parts.push([
         "## Group Behavior",
         "",
-        "This is a multi-bot group. Follow these rules:",
-        "- If the message explicitly @mentions you by name and asks you to do something → respond normally.",
-        "- If the message @mentions another bot (not you) → reply with exactly [SILENT] and nothing else.",
-        "- If another bot posted a message and did NOT @mention you → reply with exactly [SILENT] and nothing else.",
-        "- If another bot @mentions you in their message (handing off a task to you) → respond normally.",
-        "- When you complete a task and need to hand off to another bot, @mention them by name and include their entity_id in your message.",
-        "- [SILENT] means you choose not to speak. The system will suppress the message entirely.",
+        "This is a multi-bot group. Follow these rules strictly:",
+        "",
+        "**When to respond:**",
+        "- A human @mentions you by name with a direct task for you → respond.",
+        "- Another bot @mentions you (task handoff) → respond.",
+        "",
+        "**When to stay silent (reply with exactly [SILENT]):**",
+        "- The message @mentions another bot but NOT you → [SILENT].",
+        "- Another bot posted a message and did NOT @mention you → [SILENT].",
+        "- The message assigns tasks to multiple bots sequentially (e.g. 'Bot_A do X, then Bot_B do Y') and your task depends on another bot finishing first → [SILENT]. Wait for that bot to @mention you with results.",
+        "",
+        "**How to hand off to another bot:**",
+        "- Write @TheirName in your reply text. The system will automatically notify them.",
+        "",
+        "[SILENT] means you choose not to speak. The system will suppress the message entirely.",
       ].join("\n"));
     }
 
@@ -715,6 +723,28 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       if (queuedFinal) didSendReply = true;
 
       // Flush buffered reply: reassemble full text, then parse artifacts.
+      // Build a participant name→id map for auto-mention extraction
+      const participantNameMap = new Map<string, number>();
+      if (convContext?.participants) {
+        for (const p of convContext.participants) {
+          const name = p.entity?.display_name;
+          if (name && p.entity_id !== selfEntityId) {
+            participantNameMap.set(name, p.entity_id);
+          }
+        }
+      }
+
+      /** Extract @mentions from text by matching participant names. */
+      function extractMentionsFromText(text: string): number[] {
+        const found: number[] = [];
+        for (const [name, id] of participantNameMap) {
+          if (text.includes(`@${name}`)) {
+            found.push(id);
+          }
+        }
+        return found;
+      }
+
       // The final message is sent with stream_id so the ANI frontend can
       // associate it with the stream and replace progress indicators.
       if (replyBuffer.length > 0) {
@@ -724,6 +754,12 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         if (fullReply.trim() === "[SILENT]" || fullReply.trim().startsWith("[SILENT]")) {
           logVerbose(`ani: agent chose [SILENT] for conv=${conversationId}, suppressing reply`);
         } else {
+
+        // Auto-extract @mentions from reply text to trigger delivery to mentioned bots
+        const autoMentions = extractMentionsFromText(fullReply);
+        if (autoMentions.length > 0) {
+          logVerbose(`ani: auto-detected mentions in reply: ${autoMentions.join(",")}`);
+        }
 
         const segments = parseArtifacts(fullReply);
         const hasArtifacts = segments.some((s) => s.artifact);
@@ -737,7 +773,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                 for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
                   const trimmed = chunk.trim();
                   if (!trimmed) continue;
-                  await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId });
+                  await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
                 }
               }
               if (seg.artifact) {
@@ -748,6 +784,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                   text: seg.artifact.title ?? "Artifact",
                   artifact: seg.artifact,
                   streamId,
+                  mentions: autoMentions,
                 });
               }
             } catch (flushErr) {
@@ -762,7 +799,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           for (const chunk of chunks.length > 0 ? chunks : [fullReply]) {
             const trimmed = chunk.trim();
             if (!trimmed) continue;
-            await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId });
+            await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
           }
         }
         didSendReply = true;
