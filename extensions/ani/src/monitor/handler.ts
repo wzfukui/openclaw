@@ -706,47 +706,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       let didSendReply = false;
 
-      // Buffer all reply text for artifact detection (artifacts need full text to parse).
-      // Progress is sent via the non-persisted POST /conversations/:id/progress endpoint
-      // (broadcast via WebSocket, NOT stored in DB — no empty bubbles).
-      const streamId = generateStreamId();
-      const replyBuffer: string[] = [];
-
-      const { dispatcher, replyOptions, markDispatchIdle } =
-        core.channel.reply.createReplyDispatcherWithTyping({
-          responsePrefix: prefixContext.responsePrefix,
-          responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
-          humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
-          deliver: async (payload) => {
-            const replyText = payload.text ?? "";
-            if (!replyText.trim()) return;
-
-            replyBuffer.push(replyText);
-            totalChars += replyText.length;
-            logVerbose(`ani: buffered chunk (${replyText.length} chars, total ${replyBuffer.length} chunks)`);
-          },
-          onError: (err, info) => {
-            runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
-          },
-          onReplyStart: typingCallbacks.onReplyStart,
-          onIdle: typingCallbacks.onIdle,
-        });
-
-      const { queuedFinal } = await core.channel.reply.dispatchReplyFromConfig({
-        ctx: ctxPayload,
-        cfg,
-        dispatcher,
-        replyOptions: {
-          ...replyOptions,
-          onModelSelected: prefixContext.onModelSelected,
-        },
-      });
-      markDispatchIdle();
-
-      if (queuedFinal) didSendReply = true;
-
-      // Flush buffered reply: reassemble full text, then parse artifacts.
-      // Build a participant name→id map for auto-mention extraction
+      // Build participant name→id map for auto-mention extraction (needed by deliver callback)
       const participantNameMap = new Map<string, number>();
       if (convContext?.participants) {
         for (const p of convContext.participants) {
@@ -768,67 +728,98 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         return found;
       }
 
-      // The final message is sent with stream_id so the ANI frontend can
-      // associate it with the stream and replace progress indicators.
-      if (replyBuffer.length > 0) {
-        const fullReply = replyBuffer.join("\n");
+      // Send reply text immediately as it arrives (like Telegram).
+      // This ensures intermediate text between tool calls is persisted,
+      // even if later dispatch stages fail or produce followup turns.
+      const streamId = generateStreamId();
+      const replyBuffer: string[] = [];
+      let totalChars = 0;
 
-        // Multi-bot silence: if the agent chose not to speak, suppress the reply entirely
-        if (fullReply.trim() === "[SILENT]" || fullReply.trim().startsWith("[SILENT]")) {
-          logVerbose(`ani: agent chose [SILENT] for conv=${conversationId}, suppressing reply`);
-        } else {
+      const { dispatcher, replyOptions, markDispatchIdle } =
+        core.channel.reply.createReplyDispatcherWithTyping({
+          responsePrefix: prefixContext.responsePrefix,
+          responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
+          humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
+          deliver: async (payload, info) => {
+            const replyText = payload.text ?? "";
+            if (!replyText.trim()) return;
 
-        // Auto-extract @mentions from reply text to trigger delivery to mentioned bots
-        const autoMentions = extractMentionsFromText(fullReply);
-        if (autoMentions.length > 0) {
-          logVerbose(`ani: auto-detected mentions in reply: ${autoMentions.join(",")}`);
-        }
+            replyBuffer.push(replyText);
+            totalChars += replyText.length;
 
-        const segments = parseArtifacts(fullReply);
-        const hasArtifacts = segments.some((s) => s.artifact);
+            // Send each block immediately (like Telegram) so intermediate text
+            // between tool calls is persisted even if later stages fail.
+            // Check for artifacts in each block individually.
+            if (replyText.trim() === "[SILENT]" || replyText.trim().startsWith("[SILENT]")) {
+              logVerbose(`ani: agent chose [SILENT], suppressing block`);
+              return;
+            }
 
-        if (hasArtifacts) {
-          for (const seg of segments) {
-            try {
-              const plainText = seg.textBefore.trim();
-              if (plainText) {
-                const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
-                for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
-                  const trimmed = chunk.trim();
-                  if (!trimmed) continue;
-                  await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
+            const autoMentions = extractMentionsFromText(replyText);
+            const segments = parseArtifacts(replyText);
+            const hasArtifacts = segments.some((s) => s.artifact);
+
+            if (hasArtifacts) {
+              for (const seg of segments) {
+                try {
+                  const plainText = seg.textBefore.trim();
+                  if (plainText) {
+                    const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
+                    for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
+                      const trimmed = chunk.trim();
+                      if (!trimmed) continue;
+                      await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
+                    }
+                  }
+                  if (seg.artifact) {
+                    await sendAniMessage({
+                      serverUrl, apiKey, conversationId,
+                      text: seg.artifact.title ?? "Artifact",
+                      artifact: seg.artifact, streamId, mentions: autoMentions,
+                    });
+                  }
+                } catch (segErr) {
+                  logger.warn({ error: String(segErr), conversationId }, "ani: artifact segment send failed");
                 }
               }
-              if (seg.artifact) {
-                await sendAniMessage({
-                  serverUrl,
-                  apiKey,
-                  conversationId,
-                  text: seg.artifact.title ?? "Artifact",
-                  artifact: seg.artifact,
-                  streamId,
-                  mentions: autoMentions,
-                });
+            } else {
+              const chunks = core.channel.text.chunkMarkdownText(replyText, textLimit);
+              for (const chunk of chunks.length > 0 ? chunks : [replyText]) {
+                const trimmed = chunk.trim();
+                if (!trimmed) continue;
+                await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
               }
-            } catch (flushErr) {
-              logger.warn(
-                { error: String(flushErr), conversationId },
-                "ani: artifact flush segment failed, continuing with remaining segments",
-              );
             }
-          }
-        } else {
-          const chunks = core.channel.text.chunkMarkdownText(fullReply, textLimit);
-          for (const chunk of chunks.length > 0 ? chunks : [fullReply]) {
-            const trimmed = chunk.trim();
-            if (!trimmed) continue;
-            await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
-          }
-        }
-        didSendReply = true;
-      } // end of else (not SILENT)
-      }
+            didSendReply = true;
+            logVerbose(`ani: sent block (${replyText.length} chars, kind=${info?.kind ?? "unknown"})`);
+          },
+          onSkip: (_payload, info) => {
+            if (info.reason !== "silent") {
+              logVerbose(`ani: skipped reply block (reason=${info.reason})`);
+            }
+          },
+          onError: (err, info) => {
+            runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
+          },
+          onReplyStart: typingCallbacks.onReplyStart,
+          onIdle: typingCallbacks.onIdle,
+        });
 
+      const { queuedFinal } = await core.channel.reply.dispatchReplyFromConfig({
+        ctx: ctxPayload,
+        cfg,
+        dispatcher,
+        replyOptions: {
+          ...replyOptions,
+          onModelSelected: prefixContext.onModelSelected,
+        },
+      });
+      markDispatchIdle();
+
+      if (queuedFinal) didSendReply = true;
+
+      // All reply blocks were already sent in the deliver callback above.
+      // Just log and enqueue system event.
       if (didSendReply) {
         const preview = text.replace(/\s+/g, " ").slice(0, 160);
         core.system.enqueueSystemEvent(`ANI message from ${senderName}: ${preview}`, {
