@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import type { CoreConfig } from "../types.js";
 import {
   sendAniMessage,
+  sendAniProgress,
   fetchConversation,
   fetchConversationMemories,
   toggleAniReaction,
@@ -369,6 +370,26 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
   const startupMs = Date.now();
 
+  // ---------------------------------------------------------------------------
+  // Revocation tracking: when a user revokes a message that triggered agent
+  // processing, we flag the stream so the deliver callback skips remaining blocks.
+  // ---------------------------------------------------------------------------
+
+  /** Maps trigger messageId → streamId assigned during processing. */
+  const messageToStreamMap = new Map<string, string>();
+
+  /** Set of trigger messageIds whose source messages have been revoked. */
+  const revokedMessages = new Set<string>();
+
+  // ---------------------------------------------------------------------------
+  // Stream cancellation: AbortController per active stream. When the user sends
+  // a task.cancel event, we abort the controller so the deliver callback skips
+  // remaining chunks and the dispatch is interrupted as quickly as possible.
+  // ---------------------------------------------------------------------------
+
+  /** Maps streamId → AbortController for in-progress dispatches. */
+  const activeStreams = new Map<string, { controller: AbortController; conversationId: number }>();
+
   // Cache conversation metadata (refreshed every 5 minutes)
   const convCache = new Map<number, { conv: AniConversation; memories: AniMemory[]; fetchedAt: number }>();
   const CACHE_TTL = 5 * 60 * 1000;
@@ -525,6 +546,54 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
   return async (wsMsg: AniWsMessage) => {
     try {
+      // Handle message revocation: flag the trigger so deliver callback skips remaining blocks
+      if (wsMsg.type === "message.revoked") {
+        const revokedId = String(wsMsg.data?.id ?? "");
+        const conversationId = wsMsg.data?.conversation_id;
+        if (revokedId) {
+          revokedMessages.add(revokedId);
+          logVerbose(`ani: message ${revokedId} revoked in conv=${conversationId ?? "?"}`);
+
+          // Notify the agent session about the revocation
+          const streamId = messageToStreamMap.get(revokedId);
+          core.system.enqueueSystemEvent(
+            `User revoked message ${revokedId} in conversation ${conversationId ?? "unknown"}`,
+            {
+              contextKey: `ani:revoked:${conversationId ?? 0}:${revokedId}`,
+              ...(streamId ? { sessionKey: streamId } : {}),
+            },
+          );
+        }
+        return;
+      }
+
+      // Handle task cancellation: abort the in-progress dispatch for the given stream
+      if (wsMsg.type === "task.cancel" || wsMsg.type === "stream.cancel") {
+        const cancelStreamId = (wsMsg.data as Record<string, unknown> | undefined)?.stream_id as string | undefined;
+        if (cancelStreamId) {
+          const entry = activeStreams.get(cancelStreamId);
+          if (entry) {
+            logger.info(`ani: stream cancelled by user, streamId=${cancelStreamId} conv=${entry.conversationId}`);
+            entry.controller.abort();
+            activeStreams.delete(cancelStreamId);
+
+            // Send a cancellation progress event so the frontend knows the stream stopped
+            sendAniProgress({
+              serverUrl,
+              apiKey,
+              conversationId: entry.conversationId,
+              streamId: cancelStreamId,
+              status: { phase: "cancelled", progress: 100, text: "Stopped by user" },
+            }).catch((err) => {
+              logVerbose(`ani: cancel progress send failed: ${String(err)}`);
+            });
+          } else {
+            logVerbose(`ani: task.cancel for unknown streamId=${cancelStreamId}`);
+          }
+        }
+        return;
+      }
+
       // Only handle new messages (ANI uses "message.new" with dot)
       if (wsMsg.type !== "message.new") {
         logVerbose(`ani: ignoring ws event type=${wsMsg.type ?? "unknown"}`);
@@ -735,12 +804,33 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       const replyBuffer: string[] = [];
       let totalChars = 0;
 
+      // Track message → stream association for revocation support
+      if (messageId) {
+        messageToStreamMap.set(messageId, streamId);
+      }
+
+      // Register AbortController for this stream so task.cancel can interrupt it
+      const streamAbortController = new AbortController();
+      activeStreams.set(streamId, { controller: streamAbortController, conversationId });
+
       const { dispatcher, replyOptions, markDispatchIdle } =
         core.channel.reply.createReplyDispatcherWithTyping({
           responsePrefix: prefixContext.responsePrefix,
           responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
           humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
           deliver: async (payload, info) => {
+            // Skip delivery if the trigger message was revoked by the user
+            if (messageId && revokedMessages.has(messageId)) {
+              logVerbose(`ani: skipping reply block — trigger message ${messageId} was revoked`);
+              return;
+            }
+
+            // Skip delivery if the stream was cancelled by the user
+            if (streamAbortController.signal.aborted) {
+              logVerbose(`ani: skipping reply block — stream ${streamId} was cancelled`);
+              return;
+            }
+
             const replyText = payload.text ?? "";
             if (!replyText.trim()) return;
 
@@ -829,7 +919,16 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`);
       }
 
+      // Clean up revocation and cancellation tracking for this message/stream
+      if (messageId) {
+        messageToStreamMap.delete(messageId);
+        revokedMessages.delete(messageId);
+      }
+      activeStreams.delete(streamId);
+
     } catch (err) {
+      // Clean up on error as well
+      activeStreams.delete(streamId);
       runtime.error?.(`ani handler error: ${String(err)}`);
     }
   };
