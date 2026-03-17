@@ -143,3 +143,99 @@ export function createSendFileTool(): ChannelAgentTool {
     },
   };
 }
+
+/**
+ * Agent tool: ani_get_history
+ *
+ * Fetch full conversation history from the ANI backend.
+ * Unlike OpenClaw's sessions_history (which only shows messages the bot received),
+ * this tool fetches ALL messages in the conversation — including messages between
+ * humans, other bots, and messages sent while this bot was offline or not @mentioned.
+ */
+export function createGetHistoryTool(): ChannelAgentTool {
+  return {
+    label: "Get ANI Conversation History",
+    name: "ani_get_history",
+    description: [
+      "Fetch recent message history from an ANI conversation.",
+      "This returns ALL messages in the conversation, including ones you were not @mentioned in.",
+      "Use when a user references earlier messages, files, or context you don't have.",
+      "You MUST provide the conversation_id.",
+    ].join(" "),
+    parameters: Type.Object({
+      conversation_id: Type.Number({
+        description: "The ANI conversation ID",
+      }),
+      limit: Type.Optional(
+        Type.Number({
+          description: "Max messages to return (default 20, max 50)",
+        }),
+      ),
+      since_id: Type.Optional(
+        Type.Number({
+          description: "Only return messages newer than this message ID",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId, args) => {
+      const params = args as {
+        conversation_id?: number;
+        limit?: number;
+        since_id?: number;
+      };
+
+      const conversationId = params.conversation_id;
+      if (!conversationId) {
+        return { content: [{ type: "text" as const, text: "Error: conversation_id is required" }] };
+      }
+
+      const limit = Math.min(Math.max(params.limit ?? 20, 1), 50);
+
+      try {
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        let url = `${serverUrl}/api/v1/conversations/${conversationId}/messages?limit=${limit}`;
+        if (params.since_id) {
+          url += `&since_id=${params.since_id}`;
+        }
+
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!res.ok) {
+          return { content: [{ type: "text" as const, text: `Error fetching history: HTTP ${res.status}` }] };
+        }
+
+        const json = await res.json() as { data?: { messages?: Array<Record<string, unknown>> } };
+        const messages = json.data?.messages ?? [];
+
+        // Format messages for LLM readability
+        const formatted = messages.map((m: Record<string, unknown>) => {
+          const sender = (m.sender as Record<string, unknown>)?.display_name ?? `entity-${m.sender_id}`;
+          const text = ((m.layers as Record<string, unknown>)?.summary as string) ?? "";
+          const time = m.created_at as string;
+          const atts = (m.attachments as Array<Record<string, unknown>>) ?? [];
+          const attDesc = atts.length > 0
+            ? ` [${atts.length} attachment(s): ${atts.map((a) => a.filename ?? a.type).join(", ")}]`
+            : "";
+          return `[${time}] ${sender}: ${text}${attDesc}`;
+        }).reverse(); // oldest first for readability
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Conversation ${conversationId} — last ${messages.length} messages:\n\n${formatted.join("\n")}`,
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+        };
+      }
+    },
+  };
+}

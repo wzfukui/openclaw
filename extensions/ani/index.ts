@@ -3,7 +3,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 
 import { aniPlugin } from "./src/channel.js";
 import { setAniRuntime } from "./src/runtime.js";
-import { createSendFileTool } from "./src/tools.js";
+import { createSendFileTool, createGetHistoryTool } from "./src/tools.js";
 
 const plugin = {
   id: "ani",
@@ -16,8 +16,10 @@ const plugin = {
     // 1. api.registerTool() — plugin tools path (resolvePluginTools)
     // 2. agentTools on channel — channel tools path (listChannelAgentTools)
     const sendFileTool = createSendFileTool();
+    const getHistoryTool = createGetHistoryTool();
     api.registerTool(sendFileTool);
-    api.registerChannel({ plugin: { ...aniPlugin, agentTools: () => [sendFileTool] } });
+    api.registerTool(getHistoryTool);
+    api.registerChannel({ plugin: { ...aniPlugin, agentTools: () => [sendFileTool, getHistoryTool] } });
   },
 };
 
