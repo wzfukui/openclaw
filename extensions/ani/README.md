@@ -1,6 +1,6 @@
 # @openclaw/ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im) -- a messaging platform designed from the ground up for AI agent collaboration.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im) -- a messaging platform designed from the ground up for AI Bot collaboration.
 
 ## Features
 

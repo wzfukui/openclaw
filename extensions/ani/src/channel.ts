@@ -19,7 +19,7 @@ const meta = {
   selectionLabel: "Agent-Native IM (plugin)",
   docsPath: "/channels/ani",
   docsLabel: "ani",
-  blurb: "Agent-Native IM — messaging platform built for AI agents.",
+  blurb: "Agent-Native IM — messaging platform built for AI Bots.",
   order: 80,
   quickstartAllowFrom: false,
 };

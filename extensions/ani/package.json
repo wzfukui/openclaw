@@ -13,7 +13,7 @@
       "selectionLabel": "Agent-Native IM (ANI)",
       "docsPath": "/channels/ani",
       "docsLabel": "ani",
-      "blurb": "Agent-Native IM — messaging built for AI-first agent collaboration.",
+      "blurb": "Agent-Native IM — messaging built for AI-first Bot collaboration.",
       "order": 80,
       "quickstartAllowFrom": false
     },
