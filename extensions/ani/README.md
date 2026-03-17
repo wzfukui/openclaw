@@ -16,6 +16,8 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 - **Direct + Group chats** -- supports both 1:1 and group conversations with appropriate context injection
 - **Mentions** -- pass through @mention entity IDs on outbound messages
 - **Auto-reconnecting WebSocket** -- keeps the gateway connection alive with ping/pong and exponential backoff
+- **Retry with exponential backoff** -- all REST API calls automatically retry on transient failures (network errors, 502/503/504) with jittered exponential backoff (up to 3 attempts for critical calls, 2 for fire-and-forget)
+- **Config hot reload** -- config changes under `channels.ani` are auto-detected by OpenClaw; most settings take effect without a gateway restart
 - **Message chunking** -- long replies are split at markdown boundaries (configurable limit)
 
 ## Quick Start

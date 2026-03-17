@@ -1,3 +1,35 @@
+/**
+ * Fetch wrapper with exponential backoff retry for transient failures.
+ * Retries on network errors and 502/503/504 server errors.
+ */
+async function fetchWithRetry(
+  url: string,
+  opts: RequestInit,
+  maxAttempts = 3,
+  baseDelayMs = 1000,
+): Promise<Response> {
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, opts);
+      // Retry on server errors (502, 503, 504) but NOT on client errors (4xx)
+      if (res.status >= 502 && res.status <= 504 && attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err as Error;
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr ?? new Error("fetchWithRetry: all attempts failed");
+}
+
 /** Interaction option for interactive cards. */
 export interface AniInteractionOption {
   label: string;
@@ -41,7 +73,7 @@ export async function uploadAniFile(opts: {
   const blob = new Blob([opts.buffer]);
   form.append("file", blob, opts.filename);
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${opts.apiKey}`,
@@ -128,7 +160,7 @@ export async function sendAniMessage(opts: {
     ...(opts.streamId ? { stream_id: opts.streamId } : {}),
   };
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -154,7 +186,7 @@ export async function fetchConversation(opts: {
 }): Promise<AniConversation | null> {
   const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}`;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       headers: { Authorization: `Bearer ${opts.apiKey}` },
       signal: AbortSignal.timeout(30_000),
     });
@@ -174,7 +206,7 @@ export async function fetchConversationMemories(opts: {
 }): Promise<AniMemory[]> {
   const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/memories`;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       headers: { Authorization: `Bearer ${opts.apiKey}` },
       signal: AbortSignal.timeout(30_000),
     });
@@ -215,7 +247,7 @@ export async function verifyAniConnection(opts: {
   apiKey: string;
 }): Promise<{ entityId: number; name: string; entityType: string }> {
   const url = `${opts.serverUrl}/api/v1/me`;
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     headers: { Authorization: `Bearer ${opts.apiKey}` },
     signal: AbortSignal.timeout(30_000),
   });
@@ -254,18 +286,22 @@ export async function sendAniProgress(opts: {
   status: { phase: string; progress: number; text: string };
 }): Promise<void> {
   const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/progress`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
+  const res = await fetchWithRetry(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opts.apiKey}`,
+      },
+      body: JSON.stringify({
+        stream_id: opts.streamId,
+        status: opts.status,
+      }),
+      signal: AbortSignal.timeout(10_000),
     },
-    body: JSON.stringify({
-      stream_id: opts.streamId,
-      status: opts.status,
-    }),
-    signal: AbortSignal.timeout(10_000),
-  });
+    2, // fire-and-forget: less aggressive retry
+  );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`ANI progress failed (${res.status}): ${body}`);
@@ -290,15 +326,19 @@ export async function sendAniTyping(opts: {
     body.is_processing = true;
     if (opts.phase) body.phase = opts.phase;
   }
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
+  const res = await fetchWithRetry(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opts.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
     },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
-  });
+    2, // fire-and-forget: less aggressive retry
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`ANI typing failed (${res.status}): ${text}`);
@@ -313,7 +353,7 @@ export async function toggleAniReaction(opts: {
   emoji: string;
 }): Promise<void> {
   const url = `${opts.serverUrl}/api/v1/messages/${opts.messageId}/reactions`;
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
