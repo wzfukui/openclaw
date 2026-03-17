@@ -479,7 +479,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
     parts.push([
       "## Available Tools",
       "",
-      "- **ani_fetch_chat_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context — especially messages you were not @mentioned in. Default 20 messages, max 50.",
+      "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context — especially messages you were not @mentioned in. Default 5 messages, max 50.",
       "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
     ].join("\n"));
 
@@ -516,7 +516,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
     parts.push([
       "## Available Tools",
       "",
-      "- **ani_fetch_chat_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context you don't have. Default 20 messages, max 50.",
+      "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context you don't have. Default 5 messages, max 50.",
       "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
     ].join("\n"));
 

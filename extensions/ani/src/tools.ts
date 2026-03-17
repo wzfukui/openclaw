@@ -145,7 +145,7 @@ export function createSendFileTool(): ChannelAgentTool {
 }
 
 /**
- * Agent tool: ani_fetch_chat_messages
+ * Agent tool: ani_fetch_chat_history_messages
  *
  * Fetch the FULL conversation history directly from the ANI platform.
  * This is different from sessions_history which only shows messages YOU received.
@@ -155,7 +155,7 @@ export function createSendFileTool(): ChannelAgentTool {
 export function createGetHistoryTool(): ChannelAgentTool {
   return {
     label: "Fetch Chat Messages from ANI",
-    name: "ani_fetch_chat_messages",
+    name: "ani_fetch_chat_history_messages",
     description: [
       "Retrieve the full message history of an ANI conversation directly from the platform.",
       "Returns ALL messages including those you were NOT @mentioned in — human-to-human messages, other bots' replies, files shared while you were offline, etc.",
@@ -164,7 +164,7 @@ export function createGetHistoryTool(): ChannelAgentTool {
       "- You need context about what happened in the group before you were @mentioned",
       "- You want to summarize the entire conversation, not just your interactions",
       "- sessions_history is missing messages you know exist",
-      "Default: returns the 20 most recent messages. Use limit to get more (max 50).",
+      "Default: returns the 5 most recent messages. Use limit to get more (max 50).",
     ].join(" "),
     parameters: Type.Object({
       conversation_id: Type.Number({
@@ -172,8 +172,8 @@ export function createGetHistoryTool(): ChannelAgentTool {
       }),
       limit: Type.Optional(
         Type.Number({
-          description: "Number of messages to return. Default: 20, max: 50. Use 50 to get a fuller picture.",
-          default: 20,
+          description: "Number of messages to return. Default: 5, max: 50. Use 50 to get a fuller picture.",
+          default: 5,
         }),
       ),
       since_id: Type.Optional(
@@ -194,7 +194,7 @@ export function createGetHistoryTool(): ChannelAgentTool {
         return { content: [{ type: "text" as const, text: "Error: conversation_id is required" }] };
       }
 
-      const limit = Math.min(Math.max(params.limit ?? 20, 1), 50);
+      const limit = Math.min(Math.max(params.limit ?? 5, 1), 50);
 
       try {
         const { serverUrl, apiKey } = resolveAniCredentials();

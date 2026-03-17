@@ -4,7 +4,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { aniPlugin } from "./src/channel.js";
 import { setAniRuntime } from "./src/runtime.js";
 import { createSendFileTool, createGetHistoryTool } from "./src/tools.js";
-// Tool names: ani_send_file, ani_fetch_chat_messages
+// Tool names: ani_send_file, ani_fetch_chat_history_messages
 
 const plugin = {
   id: "ani",

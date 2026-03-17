@@ -47,7 +47,7 @@ openclaw config set channels.ani.serverUrl "https://your-ani-server.com"
 openclaw config set channels.ani.apiKey "aim_your_api_key"
 
 # 2. Enable the file-sending tool (required for coding/messaging profiles)
-openclaw config set tools.alsoAllow '["ani_send_file","ani_fetch_chat_messages"]' --strict-json
+openclaw config set tools.alsoAllow '["ani_send_file","ani_fetch_chat_history_messages"]' --strict-json
 
 # 3. Start the gateway
 openclaw gateway run
