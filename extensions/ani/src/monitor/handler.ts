@@ -475,6 +475,14 @@ export function createAniMessageHandler(params: AniHandlerParams) {
     // Artifact support instructions
     parts.push(ANI_ARTIFACT_SYSTEM_PROMPT);
 
+    // Tool awareness: tell the agent about available ANI tools
+    parts.push([
+      "## Available Tools",
+      "",
+      "- **ani_fetch_chat_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context — especially messages you were not @mentioned in. Default 20 messages, max 50.",
+      "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
+    ].join("\n"));
+
     return parts.join("\n\n");
   }
 
@@ -504,6 +512,13 @@ export function createAniMessageHandler(params: AniHandlerParams) {
     }
 
     parts.push(ANI_ARTIFACT_SYSTEM_PROMPT);
+
+    parts.push([
+      "## Available Tools",
+      "",
+      "- **ani_fetch_chat_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context you don't have. Default 20 messages, max 50.",
+      "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
+    ].join("\n"));
 
     return parts.join("\n\n");
   }

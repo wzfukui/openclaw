@@ -145,35 +145,40 @@ export function createSendFileTool(): ChannelAgentTool {
 }
 
 /**
- * Agent tool: ani_get_history
+ * Agent tool: ani_fetch_chat_messages
  *
- * Fetch full conversation history from the ANI backend.
- * Unlike OpenClaw's sessions_history (which only shows messages the bot received),
- * this tool fetches ALL messages in the conversation — including messages between
- * humans, other bots, and messages sent while this bot was offline or not @mentioned.
+ * Fetch the FULL conversation history directly from the ANI platform.
+ * This is different from sessions_history which only shows messages YOU received.
+ * This tool returns ALL messages — including those between other participants,
+ * messages sent while you were offline, and messages you were not @mentioned in.
  */
 export function createGetHistoryTool(): ChannelAgentTool {
   return {
-    label: "Get ANI Conversation History",
-    name: "ani_get_history",
+    label: "Fetch Chat Messages from ANI",
+    name: "ani_fetch_chat_messages",
     description: [
-      "Fetch recent message history from an ANI conversation.",
-      "This returns ALL messages in the conversation, including ones you were not @mentioned in.",
-      "Use when a user references earlier messages, files, or context you don't have.",
-      "You MUST provide the conversation_id.",
+      "Retrieve the full message history of an ANI conversation directly from the platform.",
+      "Returns ALL messages including those you were NOT @mentioned in — human-to-human messages, other bots' replies, files shared while you were offline, etc.",
+      "Use this when:",
+      "- A user says 'look at what I sent earlier' or 'check the file I shared'",
+      "- You need context about what happened in the group before you were @mentioned",
+      "- You want to summarize the entire conversation, not just your interactions",
+      "- sessions_history is missing messages you know exist",
+      "Default: returns the 20 most recent messages. Use limit to get more (max 50).",
     ].join(" "),
     parameters: Type.Object({
       conversation_id: Type.Number({
-        description: "The ANI conversation ID",
+        description: "The conversation ID to fetch messages from. You can find this in the system prompt under 'Current Conversation'.",
       }),
       limit: Type.Optional(
         Type.Number({
-          description: "Max messages to return (default 20, max 50)",
+          description: "Number of messages to return. Default: 20, max: 50. Use 50 to get a fuller picture.",
+          default: 20,
         }),
       ),
       since_id: Type.Optional(
         Type.Number({
-          description: "Only return messages newer than this message ID",
+          description: "Only return messages with ID greater than this value. Useful for incremental fetching — pass the ID of the last message you already have.",
         }),
       ),
     }),
