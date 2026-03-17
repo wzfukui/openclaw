@@ -545,6 +545,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
   }
 
   return async (wsMsg: AniWsMessage) => {
+    let streamId: string | undefined;
     try {
       // Handle message revocation: flag the trigger so deliver callback skips remaining blocks
       if (wsMsg.type === "message.revoked") {
@@ -800,7 +801,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       // Send reply text immediately as it arrives (like Telegram).
       // This ensures intermediate text between tool calls is persisted,
       // even if later dispatch stages fail or produce followup turns.
-      const streamId = generateStreamId();
+      streamId = generateStreamId();
       const replyBuffer: string[] = [];
       let totalChars = 0;
 
@@ -927,8 +928,12 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       activeStreams.delete(streamId);
 
     } catch (err) {
-      // Clean up on error as well
-      activeStreams.delete(streamId);
+      // Clean up on error as well (streamId may be undefined if error occurred before assignment)
+      if (streamId) {
+        activeStreams.delete(streamId);
+        messageToStreamMap.delete(String(wsMsg.data?.id ?? ""));
+        revokedMessages.delete(String(wsMsg.data?.id ?? ""));
+      }
       runtime.error?.(`ani handler error: ${String(err)}`);
     }
   };

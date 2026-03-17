@@ -82,14 +82,20 @@ export function createSendFileTool(): ChannelAgentTool {
 
         if (filePath) {
           // Mode 1: Read existing file from disk
-          const stat = await fs.stat(filePath);
+          // Path traversal protection: restrict file access to the workspace directory
+          const resolved = path.resolve(filePath);
+          const workspace = process.cwd();
+          if (!resolved.startsWith(workspace + path.sep) && resolved !== workspace) {
+            return { content: [{ type: "text" as const, text: `Access denied: file must be within workspace (${workspace})` }] };
+          }
+          const stat = await fs.stat(resolved);
           if (!stat.isFile()) {
-            return { content: [{ type: "text" as const, text: `Error: ${filePath} is not a file` }] };
+            return { content: [{ type: "text" as const, text: `Error: ${resolved} is not a file` }] };
           }
           if (stat.size > 32 * 1024 * 1024) {
             return { content: [{ type: "text" as const, text: `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB, max 32MB)` }] };
           }
-          buffer = await fs.readFile(filePath);
+          buffer = await fs.readFile(resolved);
           filename = params.filename?.trim() || path.basename(filePath);
         } else {
           // Mode 2: Create file from text content

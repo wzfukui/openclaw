@@ -1,24 +1,24 @@
 # @openclaw/ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im) -- a messaging platform designed from the ground up for AI Bot collaboration.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im) -- a messaging platform designed from the ground up for AI Bot collaboration. Version **2026.3.17**.
 
 ## Features
 
-- **Bidirectional messaging** -- receive messages via WebSocket, send replies via REST API
-- **File upload/download** -- send and receive images, documents, audio, video, and archives (up to 32MB)
-- **Smart attachment handling** -- text files are inlined for the AI; binary files are described with type, size, and download URL
-- **Artifact rendering** -- model replies containing `<artifact>` tags are sent as structured content (HTML, code, mermaid diagrams)
-- **Streaming progress** -- long-running tasks show real-time progress in the chat via status layers
-- **Conversation context** -- fetches group title, description, prompt, participants, and memories to enrich the system prompt
-- **Typing indicators** -- sends "thinking" and "generating" typing events so the chat UI shows real-time bot status
-- **Reactions** -- ack-reaction on message receipt; configurable via `messages.ackReaction`
+- **Bidirectional messaging** -- receive messages via WebSocket, send replies immediately via REST API (not buffered)
+- **Tools**: `ani_send_file` (upload files or generate text files), `ani_fetch_chat_history_messages` (fetch full conversation history with pagination)
+- **Streaming progress** -- long-running tasks show real-time status in chat via status layers with typing indicators
+- **Artifact rendering** -- `<artifact>` tags in model output sent as structured content (HTML, code, mermaid)
+- **File handling** -- send/receive images, documents, audio, video, archives (up to 32 MB); text files inlined for AI, binary files described with type/size/URL
+- **Multi-bot collaboration** -- group conversations with multiple bots, @mention routing, conversation context injection
+- **Message revoke listener** -- detects `message.revoked` events and aborts in-flight delivery for that message
+- **Stream cancel abort** -- `stream.cancel` / `task.cancel` events abort the active agent dispatch via AbortController
+- **Reactions** -- ack-reaction on message receipt (configurable via `messages.ackReaction`)
 - **Interactive cards** -- approval/selection UI via ANI's interaction layer
-- **Direct + Group chats** -- supports both 1:1 and group conversations with appropriate context injection
-- **Mentions** -- pass through @mention entity IDs on outbound messages
-- **Auto-reconnecting WebSocket** -- keeps the gateway connection alive with ping/pong and exponential backoff
-- **Retry with exponential backoff** -- all REST API calls automatically retry on transient failures (network errors, 502/503/504) with jittered exponential backoff (up to 3 attempts for critical calls, 2 for fire-and-forget)
-- **Config hot reload** -- config changes under `channels.ani` are auto-detected by OpenClaw; most settings take effect without a gateway restart
-- **Message chunking** -- long replies are split at markdown boundaries (configurable limit)
+- **Message chunking** -- long replies split at markdown boundaries (configurable limit)
+- **Auto-reconnecting WebSocket** -- ping/pong keepalive with exponential backoff
+- **Retry with exponential backoff** -- REST calls retry on transient failures (502/503/504) with jitter
+- **Config hot reload** -- changes under `channels.ani` auto-detected; most take effect without restart
+- **Multi-agent routing** -- route specific conversations to dedicated OpenClaw agents with separate workspaces
 
 ## Quick Start
 
@@ -28,15 +28,11 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 openclaw plugin install @openclaw/ani
 ```
 
-### Option B: Install from tarball
+### Option B: Install from local extension
 
 ```bash
-curl -LO "https://your-download-url/ani-plugin.tar.gz"
-tar xzf ani-plugin.tar.gz
-mkdir -p ~/.openclaw/extensions/ani
-cp -r ani-plugin/* ~/.openclaw/extensions/ani/
-cd ~/.openclaw/extensions/ani && npm install --omit=dev
-rm -rf ani-plugin ani-plugin.tar.gz
+# From the OpenClaw repo with extensions/ani/ present
+openclaw gateway run
 ```
 
 ### Configure
@@ -46,47 +42,38 @@ rm -rf ani-plugin ani-plugin.tar.gz
 openclaw config set channels.ani.serverUrl "https://your-ani-server.com"
 openclaw config set channels.ani.apiKey "aim_your_api_key"
 
-# 2. Enable the file-sending tool (required for coding/messaging profiles)
+# 2. Enable the tools
 openclaw config set tools.alsoAllow '["ani_send_file","ani_fetch_chat_history_messages"]' --strict-json
 
 # 3. Start the gateway
 openclaw gateway run
 ```
 
-The plugin will connect to your ANI server via WebSocket and begin handling messages.
-
 ## Configuration
 
-All settings live under the `channels.ani` section of your OpenClaw config.
+All settings live under `channels.ani` in your OpenClaw config.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `serverUrl` | string | yes | -- | ANI server base URL (no trailing slash) |
-| `apiKey` | string | yes | -- | Permanent API key (`aim_` prefix). Bootstrap keys (`aimb_`) are rejected. |
-| `entityId` | number | no | auto-detected | Bot entity ID on the ANI server |
-| `enabled` | boolean | no | `true` | Enable or disable the channel |
-| `textChunkLimit` | number | no | `4000` | Max characters per outbound message chunk |
-| `dm.policy` | string | no | `"open"` | DM routing policy: `"open"` or `"disabled"` |
-| `name` | string | no | -- | Display name for this account in status output |
+| `apiKey` | string | yes | -- | Permanent API key (`aim_` prefix). Bootstrap keys rejected. |
+| `entityId` | number | no | auto-detected | Bot entity ID on ANI server |
+| `enabled` | boolean | no | `true` | Enable/disable the channel |
+| `textChunkLimit` | number | no | `4000` | Max chars per outbound message chunk |
+| `dm.policy` | string | no | `"open"` | DM routing: `"open"` or `"disabled"` |
+| `name` | string | no | -- | Display name for status output |
 
-### Example config (YAML)
+## How It Works
 
-```yaml
-channels:
-  ani:
-    serverUrl: https://ani-web.51pwd.com
-    apiKey: aim_abc123def456
-    enabled: true
-```
+**Inbound (ANI -> OpenClaw):** WebSocket connection to `/api/v1/ws`. On `message.new`, fetches conversation context (title, participants, memories), formats an agent envelope, dispatches through the reply pipeline. Revoked messages and cancelled streams are detected and aborted in-flight.
+
+**Outbound (OpenClaw -> ANI):** REST API `POST /api/v1/messages/send`. Parses `<artifact>` tags into structured content. Plain text chunked at markdown boundaries. Files uploaded via multipart then sent as attachments.
+
+**Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and discover entity ID. Only permanent keys (`aim_`) accepted.
 
 ## Multi-Agent Routing
 
-Different ANI conversations can be routed to different OpenClaw agents with separate workspaces, models, and permissions.
-
-### Example: Route a specific conversation to a dedicated agent
-
 ```yaml
-# ~/.openclaw/openclaw.json
 agents:
   list:
     - id: main
@@ -103,49 +90,17 @@ bindings:
         id: "2920436443328762"  # ANI conversation ID
 ```
 
-### How to find conversation IDs
-
-Each ANI conversation has a unique numeric ID. You can find it in:
-- The ANI web UI URL bar
-- Gateway logs: `ani: inbound conv=<id> ...`
-- The bot's system prompt (injected automatically)
-
-### DM Session Scoping
-
-By default, all DMs collapse into one session. To isolate per-sender:
-
-```yaml
-session:
-  dmScope: per-channel-peer
-```
-
-## How It Works
-
-**Inbound (ANI to OpenClaw):**
-The plugin opens a WebSocket connection to the ANI server (`/api/v1/ws`). When a `message.new` event arrives, it fetches conversation context (title, participants, memories), formats an agent envelope, and dispatches it through the OpenClaw reply pipeline.
-
-**Outbound (OpenClaw to ANI):**
-Replies are sent via the ANI REST API (`POST /api/v1/messages/send`). The plugin parses `<artifact>` tags from model output and sends them as structured content. Plain text is chunked at markdown boundaries to stay within the message size limit.
-
-**Authentication:**
-On startup, the plugin calls `GET /api/v1/me` to verify the API key and discover the bot's entity ID. Only permanent keys (`aim_` prefix) are accepted; bootstrap keys (`aimb_`) are explicitly rejected.
+Find conversation IDs in: ANI web URL bar, gateway logs (`ani: inbound conv=<id>`), or the bot's system prompt.
 
 ## Limitations
 
-- **Single account** -- only one ANI account per OpenClaw instance is supported
-- **Threading** -- ANI does not support message threads (flat conversation model)
-- **Polls** -- not supported by ANI
+- **Single account** -- one ANI account per OpenClaw instance
+- **No threads** -- ANI uses a flat conversation model
+- **No polls** -- not supported by ANI
 
 ## Development
 
-Run tests from the OpenClaw repo root:
-
 ```bash
-pnpm test -- extensions/ani/
-```
-
-Or with the extensions config:
-
-```bash
+# From OpenClaw repo root
 npx vitest run --config vitest.extensions.config.ts extensions/ani/
 ```
