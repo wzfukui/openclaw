@@ -1,6 +1,6 @@
 /**
  * Fetch wrapper with exponential backoff retry for transient failures.
- * Retries on network errors and 502/503/504 server errors.
+ * Retries on network errors, 429 (rate limit), and 502/503/504 server errors.
  */
 async function fetchWithRetry(
   url: string,
@@ -12,8 +12,21 @@ async function fetchWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, opts);
+
+      // Retry on 429 (rate limit) — respect Retry-After header
+      if (res.status === 429 && attempt < maxAttempts) {
+        const retryAfterSec = Number(res.headers.get("Retry-After") || 0);
+        const retryDelay = retryAfterSec > 0
+          ? Math.min(retryAfterSec, 30) * 1000
+          : baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
+        await res.body?.cancel(); // drain response to free connection
+        await new Promise((r) => setTimeout(r, retryDelay));
+        continue;
+      }
+
       // Retry on server errors (502, 503, 504) but NOT on client errors (4xx)
       if (res.status >= 502 && res.status <= 504 && attempt < maxAttempts) {
+        await res.body?.cancel(); // drain response to free connection
         const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
         await new Promise((r) => setTimeout(r, delay));
         continue;

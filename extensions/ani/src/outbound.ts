@@ -94,9 +94,16 @@ export const aniOutbound: ChannelOutboundAdapter = {
     if (mediaUrl) {
       try {
         // Download media from the provided URL
-        const mediaRes = await fetch(mediaUrl);
+        const mediaRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000) });
         if (!mediaRes.ok) {
           throw new Error(`Failed to download media (${mediaRes.status})`);
+        }
+
+        // Reject files larger than 32MB before reading the body
+        const contentLength = Number(mediaRes.headers.get("content-length") || 0);
+        if (contentLength > 32 * 1024 * 1024) {
+          await mediaRes.body?.cancel();
+          throw new Error(`Media too large: ${contentLength} bytes (max 32MB)`);
         }
 
         const contentType = mediaRes.headers.get("content-type") ?? "application/octet-stream";

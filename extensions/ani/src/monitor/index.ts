@@ -81,8 +81,19 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   let ws: InstanceType<typeof WebSocket> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isShuttingDown = false;
-  const RECONNECT_DELAY_MS = 5000;
   const PING_INTERVAL_MS = 30000;
+
+  // Exponential backoff with jitter for reconnection
+  const BACKOFF_BASE_MS = 1000;
+  const BACKOFF_MAX_MS = 60000;
+  const BACKOFF_JITTER = 0.25; // 0-25% random jitter
+  let backoffAttempt = 0;
+
+  function getReconnectDelay(): number {
+    const exponential = Math.min(BACKOFF_BASE_MS * Math.pow(2, backoffAttempt), BACKOFF_MAX_MS);
+    const jitter = exponential * BACKOFF_JITTER * Math.random();
+    return Math.round(exponential + jitter);
+  }
 
   function connect() {
     if (isShuttingDown) return;
@@ -94,6 +105,8 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
 
     ws.on("open", () => {
       logger.info("ani: WebSocket connected");
+      // Reset backoff on successful connection
+      backoffAttempt = 0;
       // Start ping keep-alive
       pingTimer = setInterval(() => {
         if (ws?.readyState === WebSocket.OPEN) {
@@ -120,8 +133,10 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
     ws.on("close", (code, reason) => {
       if (pingTimer) clearInterval(pingTimer);
       if (isShuttingDown) return;
-      logger.info(`ani: WebSocket closed (code=${code}), reconnecting in ${RECONNECT_DELAY_MS}ms...`);
-      reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+      const delay = getReconnectDelay();
+      backoffAttempt++;
+      logger.info(`ani: WebSocket closed (code=${code}), reconnecting in ${delay}ms (attempt ${backoffAttempt})...`);
+      reconnectTimer = setTimeout(connect, delay);
     });
 
     ws.on("error", (err) => {
