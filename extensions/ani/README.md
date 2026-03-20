@@ -1,6 +1,6 @@
 # @openclaw/ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im) -- a messaging platform designed from the ground up for AI Bot collaboration. Version **2026.3.17**.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.3.17**.
 
 ## Features
 
@@ -22,7 +22,7 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 
 ## Quick Start
 
-### Option A: Install from npm (when published)
+### Option A: Install from npm
 
 ```bash
 openclaw plugin install @openclaw/ani
@@ -39,7 +39,7 @@ openclaw gateway run
 
 ```bash
 # 1. Set ANI server and API key (create a Bot in ANI Web to get the key)
-openclaw config set channels.ani.serverUrl "https://your-ani-server.com"
+openclaw config set channels.ani.serverUrl "https://your-ani-server.example.com"
 openclaw config set channels.ani.apiKey "aim_your_api_key"
 
 # 2. Enable the tools
@@ -108,9 +108,13 @@ Practical implication:
 - image/audio/video understanding still depends on the selected model/runtime
 - PDF / office docs are transport-supported, but parser experience is still incomplete
 
-For the current detailed matrix, see:
+Current support levels:
 
-- `../../../../_experience/ani-attachment-capability-matrix-2026-03-20.md`
+- text files: most reliable, small files may be inlined for the model
+- images / audio / video: transport works, understanding still depends on the selected model/runtime
+- PDF / Office documents: transport works, parser experience is still incomplete
+
+If you need a fuller attachment capability breakdown, document it in your ANI deployment docs rather than relying on private local paths.
 
 ## Multi-Agent Routing
 

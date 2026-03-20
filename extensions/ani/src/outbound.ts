@@ -12,11 +12,10 @@ export function parseConversationId(to: string): number {
     .replace(/^conv:/i, "")
     .replace(/^channel:/i, "")
     .trim();
-  const num = Number.parseInt(cleaned, 10);
-  if (Number.isNaN(num) || num <= 0) {
+  if (!/^[1-9]\d*$/.test(cleaned)) {
     throw new Error(`ANI outbound: invalid conversation target "${to}"`);
   }
-  return num;
+  return Number.parseInt(cleaned, 10);
 }
 
 /**

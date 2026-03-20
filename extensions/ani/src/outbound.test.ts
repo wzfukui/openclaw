@@ -40,7 +40,6 @@ describe("parseConversationId", () => {
   });
 
   it("throws on floating point", () => {
-    // parseInt("3.14") returns 3 which is > 0, so this should succeed with 3
-    expect(parseConversationId("3.14")).toBe(3);
+    expect(() => parseConversationId("3.14")).toThrow("invalid conversation target");
   });
 });

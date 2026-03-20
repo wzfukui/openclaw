@@ -6,7 +6,7 @@
   "uiHints": {
     "serverUrl": {
       "label": "Server URL",
-      "placeholder": "https://ani-web.51pwd.com",
+      "placeholder": "https://your-ani-server.example.com",
       "help": "Base URL of the ANI server (no trailing slash)"
     },
     "apiKey": {

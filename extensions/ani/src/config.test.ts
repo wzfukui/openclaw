@@ -8,7 +8,7 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com",
+          serverUrl: "https://your-ani-server.example.com",
           apiKey: "aim_abc123",
           entityId: 42,
           enabled: true,
@@ -19,7 +19,7 @@ describe("resolveAniAccount", () => {
     const result = resolveAniAccount({ cfg });
     expect(result.configured).toBe(true);
     expect(result.enabled).toBe(true);
-    expect(result.serverUrl).toBe("https://ani-web.51pwd.com");
+    expect(result.serverUrl).toBe("https://your-ani-server.example.com");
     expect(result.entityId).toBe(42);
     expect(result.name).toBe("My Bot");
     expect(result.accountId).toBe("default");
@@ -29,13 +29,13 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com///",
+          serverUrl: "https://your-ani-server.example.com///",
           apiKey: "aim_abc123",
         },
       },
     };
     const result = resolveAniAccount({ cfg });
-    expect(result.serverUrl).toBe("https://ani-web.51pwd.com");
+    expect(result.serverUrl).toBe("https://your-ani-server.example.com");
     expect(result.configured).toBe(true);
   });
 
@@ -56,7 +56,7 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com",
+          serverUrl: "https://your-ani-server.example.com",
         },
       },
     };
@@ -68,7 +68,7 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com",
+          serverUrl: "https://your-ani-server.example.com",
           apiKey: "aimb_bootstrap_key_123",
         },
       },
@@ -81,7 +81,7 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com",
+          serverUrl: "https://your-ani-server.example.com",
           apiKey: "aim_abc123",
         },
       },
@@ -94,7 +94,7 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com",
+          serverUrl: "https://your-ani-server.example.com",
           apiKey: "aim_abc123",
           enabled: false,
         },
