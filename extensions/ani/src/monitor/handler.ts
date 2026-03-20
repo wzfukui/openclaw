@@ -195,32 +195,32 @@ function classifyMime(mimeType?: string): { category: string; label: string } {
   return { category: "file", label: mimeType };
 }
 
-/** Format an attachment description with category-specific prefix and download URL. */
+/** Format an attachment description for the model without exposing protected download URLs. */
 function formatAttachmentDescription(
   filename: string,
   mimeType: string | undefined,
   size: number | undefined,
-  downloadUrl: string | undefined,
+  requiresAuthAccess: boolean,
   duration?: number,
 ): string {
   const { category, label } = classifyMime(mimeType);
   const sizeStr = formatFileSize(size);
   const durationStr = duration ? `, ${duration}s` : "";
-  const urlStr = downloadUrl ? ` — download: ${downloadUrl}` : "";
+  const accessStr = requiresAuthAccess ? " — available via authenticated ANI attachment access" : "";
 
   switch (category) {
     case "image":
-      return `[Image attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+      return `[Image attached: ${filename} (${label}, ${sizeStr})${accessStr}]`;
     case "document":
-      return `[Document attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+      return `[Document attached: ${filename} (${label}, ${sizeStr})${accessStr}]`;
     case "audio":
-      return `[Audio attached: ${filename} (${label}${durationStr}, ${sizeStr})${urlStr}]`;
+      return `[Audio attached: ${filename} (${label}${durationStr}, ${sizeStr})${accessStr}]`;
     case "video":
-      return `[Video attached: ${filename} (${label}${durationStr}, ${sizeStr})${urlStr}]`;
+      return `[Video attached: ${filename} (${label}${durationStr}, ${sizeStr})${accessStr}]`;
     case "archive":
-      return `[Archive attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+      return `[Archive attached: ${filename} (${label}, ${sizeStr})${accessStr}]`;
     default:
-      return `[File attached: ${filename} (${label}, ${sizeStr})${urlStr}]`;
+      return `[File attached: ${filename} (${label}, ${sizeStr})${accessStr}]`;
   }
 }
 
@@ -236,7 +236,7 @@ async function processAttachments(
     const url = att.url;
 
     if (!url) {
-      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, undefined, att.duration));
+      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, false, att.duration));
       continue;
     }
 
@@ -254,25 +254,25 @@ async function processAttachments(
           // Validate actual response size before reading body to prevent DoS
           const contentLength = Number(res.headers.get("content-length") ?? "0");
           if (contentLength > MAX_TEXT_FILE_SIZE) {
-            parts.push(formatAttachmentDescription(filename, att.mime_type, contentLength, fullUrl, att.duration));
+            parts.push(formatAttachmentDescription(filename, att.mime_type, contentLength, true, att.duration));
           } else {
             const content = await res.text();
             if (content.length > MAX_TEXT_FILE_SIZE) {
               // Actual body exceeded limit despite header; fall back to description
-              parts.push(formatAttachmentDescription(filename, att.mime_type, content.length, fullUrl, att.duration));
+              parts.push(formatAttachmentDescription(filename, att.mime_type, content.length, true, att.duration));
             } else {
               parts.push(`--- Attached file: ${filename} ---\n${content}\n--- End of file ---`);
             }
           }
         } else {
-          parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
+          parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration));
         }
       } catch {
-        parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
+        parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration));
       }
     } else {
-      // Non-text or large files: provide a rich description with download URL
-      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, fullUrl, att.duration));
+      // Non-text or large files: describe them, but do not leak protected download URLs
+      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration));
     }
   }
 
