@@ -254,6 +254,170 @@ export interface AniMemory {
   content: string;
 }
 
+export interface AniTaskEntity {
+  id?: number;
+  display_name?: string;
+  entity_type?: string;
+}
+
+export interface AniTask {
+  id: number;
+  conversation_id: number;
+  title: string;
+  description?: string;
+  assignee_id?: number | null;
+  status: string;
+  priority: string;
+  due_date?: string | null;
+  parent_task_id?: number | null;
+  sort_order?: number;
+  created_by: number;
+  created_at?: string;
+  updated_at?: string;
+  completed_at?: string | null;
+  assignee?: AniTaskEntity | null;
+  creator?: AniTaskEntity | null;
+}
+
+export async function listAniTasks(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  status?: string;
+}): Promise<AniTask[]> {
+  const query = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
+  const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/tasks${query}`;
+  const res = await fetchWithRetry(url, {
+    headers: { Authorization: `Bearer ${opts.apiKey}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ANI list tasks failed (${res.status}): ${body}`);
+  }
+  const json = (await res.json()) as { data?: AniTask[] };
+  return json.data ?? [];
+}
+
+export async function getAniTask(opts: {
+  serverUrl: string;
+  apiKey: string;
+  taskId: number;
+}): Promise<AniTask> {
+  const url = `${opts.serverUrl}/api/v1/tasks/${opts.taskId}`;
+  const res = await fetchWithRetry(url, {
+    headers: { Authorization: `Bearer ${opts.apiKey}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ANI get task failed (${res.status}): ${body}`);
+  }
+  const json = (await res.json()) as { data?: AniTask };
+  if (!json.data) {
+    throw new Error("ANI get task failed: missing task payload");
+  }
+  return json.data;
+}
+
+export async function createAniTask(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  title: string;
+  description?: string;
+  assignee_id?: number;
+  priority?: string;
+  due_date?: string;
+  parent_task_id?: number;
+}): Promise<AniTask> {
+  const url = `${opts.serverUrl}/api/v1/conversations/${opts.conversationId}/tasks`;
+  const res = await fetchWithRetry(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${opts.apiKey}`,
+    },
+    body: JSON.stringify({
+      title: opts.title,
+      ...(opts.description ? { description: opts.description } : {}),
+      ...(opts.assignee_id != null ? { assignee_id: opts.assignee_id } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
+      ...(opts.due_date ? { due_date: opts.due_date } : {}),
+      ...(opts.parent_task_id != null ? { parent_task_id: opts.parent_task_id } : {}),
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ANI create task failed (${res.status}): ${body}`);
+  }
+  const json = (await res.json()) as { data?: AniTask };
+  if (!json.data) {
+    throw new Error("ANI create task failed: missing task payload");
+  }
+  return json.data;
+}
+
+export async function updateAniTask(opts: {
+  serverUrl: string;
+  apiKey: string;
+  taskId: number;
+  title?: string;
+  description?: string;
+  assignee_id?: number;
+  status?: string;
+  priority?: string;
+  due_date?: string;
+  sort_order?: number;
+}): Promise<AniTask> {
+  const url = `${opts.serverUrl}/api/v1/tasks/${opts.taskId}`;
+  const body: Record<string, unknown> = {};
+  if (opts.title !== undefined) body.title = opts.title;
+  if (opts.description !== undefined) body.description = opts.description;
+  if (opts.assignee_id !== undefined) body.assignee_id = opts.assignee_id;
+  if (opts.status !== undefined) body.status = opts.status;
+  if (opts.priority !== undefined) body.priority = opts.priority;
+  if (opts.due_date !== undefined) body.due_date = opts.due_date;
+  if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
+
+  const res = await fetchWithRetry(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${opts.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`ANI update task failed (${res.status}): ${bodyText}`);
+  }
+  const json = (await res.json()) as { data?: AniTask };
+  if (!json.data) {
+    throw new Error("ANI update task failed: missing task payload");
+  }
+  return json.data;
+}
+
+export async function deleteAniTask(opts: {
+  serverUrl: string;
+  apiKey: string;
+  taskId: number;
+}): Promise<void> {
+  const url = `${opts.serverUrl}/api/v1/tasks/${opts.taskId}`;
+  const res = await fetchWithRetry(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${opts.apiKey}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ANI delete task failed (${res.status}): ${body}`);
+  }
+}
+
 /** Verify the API key works and return entity info. */
 export async function verifyAniConnection(opts: {
   serverUrl: string;

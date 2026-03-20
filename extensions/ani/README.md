@@ -5,7 +5,7 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 ## Features
 
 - **Bidirectional messaging** -- receive messages via WebSocket, send replies immediately via REST API (not buffered)
-- **Tools**: `ani_send_file` (upload files or generate text files), `ani_fetch_chat_history_messages` (fetch full conversation history with pagination)
+- **Tools**: `ani_send_file`, `ani_fetch_chat_history_messages`, `ani_list_conversation_tasks`, `ani_get_task`, `ani_create_task`, `ani_update_task`, `ani_delete_task`
 - **Streaming progress** -- long-running tasks show real-time status in chat via status layers with typing indicators
 - **Artifact rendering** -- `<artifact>` tags in model output sent as structured content (HTML, code, mermaid)
 - **File handling** -- send/receive images, documents, audio, video, archives (up to 32 MB); small text files inlined for AI, protected binary files downloaded with ANI auth and saved to local media paths
@@ -43,7 +43,7 @@ openclaw config set channels.ani.serverUrl "https://your-ani-server.com"
 openclaw config set channels.ani.apiKey "aim_your_api_key"
 
 # 2. Enable the tools
-openclaw config set tools.alsoAllow '["ani_send_file","ani_fetch_chat_history_messages"]' --strict-json
+openclaw config set tools.alsoAllow '["ani_send_file","ani_fetch_chat_history_messages","ani_list_conversation_tasks","ani_get_task","ani_create_task","ani_update_task","ani_delete_task"]' --strict-json
 
 # 3. Start the gateway
 openclaw gateway run
@@ -70,6 +70,27 @@ All settings live under `channels.ani` in your OpenClaw config.
 **Outbound (OpenClaw -> ANI):** REST API `POST /api/v1/messages/send`. Parses `<artifact>` tags into structured content. Plain text chunked at markdown boundaries. Files uploaded via multipart then sent as attachments.
 
 **Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and discover entity ID. Only permanent keys (`aim_`) accepted.
+
+## Task Roadmap Tools
+
+The ANI plugin can now read and mutate the current conversation task roadmap through dedicated tools:
+
+- `ani_list_conversation_tasks`
+- `ani_get_task`
+- `ani_create_task`
+- `ani_update_task`
+- `ani_delete_task`
+
+These tools reuse ANI's backend permissions:
+
+- the bot must be a member of the conversation
+- create/list/get require conversation participation
+- update/delete still follow ANI's existing creator / assignee / admin rules
+
+Planned but not implemented yet:
+
+- approval workflow for task mutations in group chats
+- member-submitted task edits entering a pending-review queue for group admins
 
 ## Attachment Behavior
 

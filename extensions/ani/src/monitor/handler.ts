@@ -550,6 +550,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       "",
       "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context — especially messages you were not @mentioned in. Default 5 messages, max 50.",
       "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
+      "- **ani_list_conversation_tasks**: List the current roadmap/tasks for this conversation, optionally filtered by status.",
+      "- **ani_get_task**: Fetch the details of a single task by task ID.",
+      "- **ani_create_task**: Create a new conversation task when the user asks you to add work items.",
+      "- **ani_update_task**: Update task status, assignee, priority, title, description, due date, or sort order.",
+      "- **ani_delete_task**: Delete a task when explicitly requested and allowed by ANI permissions.",
     ].join("\n"));
 
     return parts.join("\n\n");
@@ -587,6 +592,11 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       "",
       "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context you don't have. Default 5 messages, max 50.",
       "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
+      "- **ani_list_conversation_tasks**: List the current roadmap/tasks for this conversation, optionally filtered by status.",
+      "- **ani_get_task**: Fetch the details of a single task by task ID.",
+      "- **ani_create_task**: Create a new conversation task when the user asks you to add work items.",
+      "- **ani_update_task**: Update task status, assignee, priority, title, description, due date, or sort order.",
+      "- **ani_delete_task**: Delete a task when explicitly requested and allowed by ANI permissions.",
     ].join("\n"));
 
     return parts.join("\n\n");

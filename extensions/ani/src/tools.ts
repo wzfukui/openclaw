@@ -3,9 +3,47 @@ import type { ChannelAgentTool } from "openclaw/plugin-sdk";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { sendAniMessage, uploadAniFile } from "./monitor/send.js";
+import {
+  createAniTask,
+  deleteAniTask,
+  getAniTask,
+  listAniTasks,
+  sendAniMessage,
+  updateAniTask,
+  uploadAniFile,
+  type AniTask,
+} from "./monitor/send.js";
 import type { AniAttachment } from "./monitor/send.js";
 import { resolveAniCredentials, getMimeType } from "./utils.js";
+
+const TASK_STATUS_VALUES = ["pending", "in_progress", "done", "cancelled", "handed_over"] as const;
+const TASK_PRIORITY_VALUES = ["low", "medium", "high"] as const;
+
+function formatTask(task: AniTask): string {
+  const assignee = task.assignee?.display_name ?? (task.assignee_id != null ? `#${task.assignee_id}` : "unassigned");
+  const creator = task.creator?.display_name ?? `#${task.created_by}`;
+  const due = task.due_date ? `, due ${task.due_date}` : "";
+  const parent = task.parent_task_id != null ? `, parent #${task.parent_task_id}` : "";
+  return [
+    `#${task.id} ${task.title}`,
+    `status=${task.status}, priority=${task.priority}, assignee=${assignee}, creator=${creator}${due}${parent}`,
+    task.description?.trim() ? `description: ${task.description.trim()}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function validateTaskStatus(status: string | undefined): string | null {
+  if (!status) return null;
+  return TASK_STATUS_VALUES.includes(status as typeof TASK_STATUS_VALUES[number])
+    ? status
+    : `Error: status must be one of ${TASK_STATUS_VALUES.join(", ")}`;
+}
+
+function validateTaskPriority(priority: string | undefined): string | null {
+  if (!priority) return null;
+  return TASK_PRIORITY_VALUES.includes(priority as typeof TASK_PRIORITY_VALUES[number])
+    ? priority
+    : `Error: priority must be one of ${TASK_PRIORITY_VALUES.join(", ")}`;
+}
 
 /**
  * Agent tool: ani_send_file
@@ -244,6 +282,318 @@ export function createGetHistoryTool(): ChannelAgentTool {
           content: [{
             type: "text" as const,
             text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+        };
+      }
+    },
+  };
+}
+
+export function createListTasksTool(): ChannelAgentTool {
+  return {
+    label: "List ANI Conversation Tasks",
+    name: "ani_list_conversation_tasks",
+    description: [
+      "List the current task roadmap for an ANI conversation.",
+      "Use this to inspect task titles, assignees, priorities, parent dependencies, and statuses",
+      "before planning work or reporting progress.",
+    ].join(" "),
+    parameters: Type.Object({
+      conversation_id: Type.Number({
+        description: "The ANI conversation ID whose tasks should be listed.",
+      }),
+      status: Type.Optional(
+        Type.String({
+          description: "Optional status filter: pending, in_progress, done, cancelled, handed_over.",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId, args) => {
+      const params = args as { conversation_id?: number; status?: string };
+      if (!params.conversation_id) {
+        return { content: [{ type: "text" as const, text: "Error: conversation_id is required" }] };
+      }
+      const statusErr = validateTaskStatus(params.status);
+      if (statusErr) {
+        return { content: [{ type: "text" as const, text: statusErr }] };
+      }
+
+      try {
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        const tasks = await listAniTasks({
+          serverUrl,
+          apiKey,
+          conversationId: params.conversation_id,
+          status: params.status,
+        });
+
+        if (tasks.length === 0) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Conversation ${params.conversation_id} has no tasks${params.status ? ` with status ${params.status}` : ""}.`,
+            }],
+          };
+        }
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Conversation ${params.conversation_id} tasks (${tasks.length}):\n\n${tasks.map(formatTask).join("\n\n")}`,
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Error listing tasks: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+        };
+      }
+    },
+  };
+}
+
+export function createGetTaskTool(): ChannelAgentTool {
+  return {
+    label: "Get ANI Task Details",
+    name: "ani_get_task",
+    description: "Get the full details and current status for a single ANI task by task ID.",
+    parameters: Type.Object({
+      task_id: Type.Number({
+        description: "The ANI task ID to retrieve.",
+      }),
+    }),
+    execute: async (_toolCallId, args) => {
+      const params = args as { task_id?: number };
+      if (!params.task_id) {
+        return { content: [{ type: "text" as const, text: "Error: task_id is required" }] };
+      }
+
+      try {
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        const task = await getAniTask({ serverUrl, apiKey, taskId: params.task_id });
+        return {
+          content: [{ type: "text" as const, text: formatTask(task) }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Error getting task: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+        };
+      }
+    },
+  };
+}
+
+export function createCreateTaskTool(): ChannelAgentTool {
+  return {
+    label: "Create ANI Task",
+    name: "ani_create_task",
+    description: [
+      "Create a new task in the current ANI conversation roadmap.",
+      "The ANI backend will enforce conversation membership and any existing task permissions.",
+    ].join(" "),
+    parameters: Type.Object({
+      conversation_id: Type.Number({
+        description: "The ANI conversation ID where the task should be created.",
+      }),
+      title: Type.String({
+        description: "Short task title.",
+      }),
+      description: Type.Optional(
+        Type.String({
+          description: "Optional detailed description.",
+        }),
+      ),
+      assignee_id: Type.Optional(
+        Type.Number({
+          description: "Optional entity ID to assign the task to.",
+        }),
+      ),
+      priority: Type.Optional(
+        Type.String({
+          description: "Optional priority: low, medium, or high.",
+        }),
+      ),
+      due_date: Type.Optional(
+        Type.String({
+          description: "Optional due date as RFC3339 timestamp.",
+        }),
+      ),
+      parent_task_id: Type.Optional(
+        Type.Number({
+          description: "Optional parent task ID for dependency trees.",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId, args) => {
+      const params = args as {
+        conversation_id?: number;
+        title?: string;
+        description?: string;
+        assignee_id?: number;
+        priority?: string;
+        due_date?: string;
+        parent_task_id?: number;
+      };
+
+      if (!params.conversation_id) {
+        return { content: [{ type: "text" as const, text: "Error: conversation_id is required" }] };
+      }
+      if (!params.title?.trim()) {
+        return { content: [{ type: "text" as const, text: "Error: title is required" }] };
+      }
+      const priorityErr = validateTaskPriority(params.priority);
+      if (priorityErr) {
+        return { content: [{ type: "text" as const, text: priorityErr }] };
+      }
+
+      try {
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        const task = await createAniTask({
+          serverUrl,
+          apiKey,
+          conversationId: params.conversation_id,
+          title: params.title.trim(),
+          description: params.description?.trim(),
+          assignee_id: params.assignee_id,
+          priority: params.priority,
+          due_date: params.due_date,
+          parent_task_id: params.parent_task_id,
+        });
+        return {
+          content: [{ type: "text" as const, text: `Task created:\n${formatTask(task)}` }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Error creating task: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+        };
+      }
+    },
+  };
+}
+
+export function createUpdateTaskTool(): ChannelAgentTool {
+  return {
+    label: "Update ANI Task",
+    name: "ani_update_task",
+    description: [
+      "Update an existing ANI task.",
+      "Use this to change status, title, description, assignee, priority, due date, or sort order.",
+      "The ANI backend enforces existing permissions for creator, assignee, and admin roles.",
+    ].join(" "),
+    parameters: Type.Object({
+      task_id: Type.Number({
+        description: "The ANI task ID to update.",
+      }),
+      title: Type.Optional(Type.String({ description: "Optional new task title." })),
+      description: Type.Optional(Type.String({ description: "Optional new description." })),
+      assignee_id: Type.Optional(Type.Number({ description: "Optional new assignee entity ID." })),
+      status: Type.Optional(Type.String({ description: "Optional new status: pending, in_progress, done, cancelled, handed_over." })),
+      priority: Type.Optional(Type.String({ description: "Optional new priority: low, medium, high." })),
+      due_date: Type.Optional(Type.String({ description: "Optional new due date as RFC3339 timestamp." })),
+      sort_order: Type.Optional(Type.Number({ description: "Optional new sort order integer." })),
+    }),
+    execute: async (_toolCallId, args) => {
+      const params = args as {
+        task_id?: number;
+        title?: string;
+        description?: string;
+        assignee_id?: number;
+        status?: string;
+        priority?: string;
+        due_date?: string;
+        sort_order?: number;
+      };
+
+      if (!params.task_id) {
+        return { content: [{ type: "text" as const, text: "Error: task_id is required" }] };
+      }
+      if (
+        params.title === undefined &&
+        params.description === undefined &&
+        params.assignee_id === undefined &&
+        params.status === undefined &&
+        params.priority === undefined &&
+        params.due_date === undefined &&
+        params.sort_order === undefined
+      ) {
+        return { content: [{ type: "text" as const, text: "Error: provide at least one field to update" }] };
+      }
+      const statusErr = validateTaskStatus(params.status);
+      if (statusErr) {
+        return { content: [{ type: "text" as const, text: statusErr }] };
+      }
+      const priorityErr = validateTaskPriority(params.priority);
+      if (priorityErr) {
+        return { content: [{ type: "text" as const, text: priorityErr }] };
+      }
+
+      try {
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        const task = await updateAniTask({
+          serverUrl,
+          apiKey,
+          taskId: params.task_id,
+          title: params.title?.trim(),
+          description: params.description?.trim(),
+          assignee_id: params.assignee_id,
+          status: params.status,
+          priority: params.priority,
+          due_date: params.due_date,
+          sort_order: params.sort_order,
+        });
+        return {
+          content: [{ type: "text" as const, text: `Task updated:\n${formatTask(task)}` }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Error updating task: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+        };
+      }
+    },
+  };
+}
+
+export function createDeleteTaskTool(): ChannelAgentTool {
+  return {
+    label: "Delete ANI Task",
+    name: "ani_delete_task",
+    description: [
+      "Delete an ANI task by task ID.",
+      "Use with care; the ANI backend still enforces creator/admin permissions.",
+    ].join(" "),
+    parameters: Type.Object({
+      task_id: Type.Number({
+        description: "The ANI task ID to delete.",
+      }),
+    }),
+    execute: async (_toolCallId, args) => {
+      const params = args as { task_id?: number };
+      if (!params.task_id) {
+        return { content: [{ type: "text" as const, text: "Error: task_id is required" }] };
+      }
+
+      try {
+        const { serverUrl, apiKey } = resolveAniCredentials();
+        await deleteAniTask({ serverUrl, apiKey, taskId: params.task_id });
+        return {
+          content: [{ type: "text" as const, text: `Task #${params.task_id} deleted.` }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Error deleting task: ${err instanceof Error ? err.message : String(err)}`,
           }],
         };
       }
