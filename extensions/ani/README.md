@@ -8,7 +8,7 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 - **Tools**: `ani_send_file` (upload files or generate text files), `ani_fetch_chat_history_messages` (fetch full conversation history with pagination)
 - **Streaming progress** -- long-running tasks show real-time status in chat via status layers with typing indicators
 - **Artifact rendering** -- `<artifact>` tags in model output sent as structured content (HTML, code, mermaid)
-- **File handling** -- send/receive images, documents, audio, video, archives (up to 32 MB); text files inlined for AI, binary files described with type/size/URL
+- **File handling** -- send/receive images, documents, audio, video, archives (up to 32 MB); small text files inlined for AI, protected binary files downloaded with ANI auth and saved to local media paths
 - **Multi-bot collaboration** -- group conversations with multiple bots, @mention routing, conversation context injection
 - **Message revoke listener** -- detects `message.revoked` events and aborts in-flight delivery for that message
 - **Stream cancel abort** -- `stream.cancel` / `task.cancel` events abort the active agent dispatch via AbortController
@@ -71,6 +71,26 @@ All settings live under `channels.ani` in your OpenClaw config.
 
 **Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and discover entity ID. Only permanent keys (`aim_`) accepted.
 
+## Attachment Behavior
+
+This plugin now follows ANI's protected attachment model:
+
+- conversation files stay as protected ANI resources
+- the plugin downloads them with ANI auth
+- binary/media files are saved locally and passed via `MediaPath` / `MediaPaths`
+- small text files may be inlined into the model prompt
+- the plugin should not expose naked protected `/files/...` URLs to the agent as if they were public downloads
+
+Practical implication:
+
+- transport can succeed even if the model cannot truly understand the file contents
+- image/audio/video understanding still depends on the selected model/runtime
+- PDF / office docs are transport-supported, but parser experience is still incomplete
+
+For the current detailed matrix, see:
+
+- `../../../../_experience/ani-attachment-capability-matrix-2026-03-20.md`
+
 ## Multi-Agent Routing
 
 ```yaml
@@ -97,6 +117,7 @@ Find conversation IDs in: ANI web URL bar, gateway logs (`ani: inbound conv=<id>
 - **Single account** -- one ANI account per OpenClaw instance
 - **No threads** -- ANI uses a flat conversation model
 - **No polls** -- not supported by ANI
+- **Model-dependent multimodality** -- successful attachment delivery does not guarantee image/audio/video understanding
 
 ## Development
 
