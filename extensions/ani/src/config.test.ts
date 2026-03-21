@@ -116,7 +116,7 @@ describe("resolveAniAccount", () => {
     const cfg: CoreConfig = {
       channels: {
         ani: {
-          serverUrl: "https://ani-web.51pwd.com",
+          serverUrl: "https://agent-native.im",
           apiKey: "aim_abc123",
         },
       },

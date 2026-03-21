@@ -3,7 +3,7 @@ export type AniConfig = {
   enabled?: boolean;
   name?: string;
 
-  /** ANI server base URL, e.g. "https://ani-web.51pwd.com" */
+  /** ANI server base URL, e.g. "https://agent-native.im" */
   serverUrl?: string;
 
   /** Permanent API key (aim_ prefix). Bootstrap keys (aimb_) are NOT supported. */
