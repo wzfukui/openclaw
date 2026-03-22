@@ -73,7 +73,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   // Build WebSocket URL
   const wsProto = serverUrl.startsWith("https") ? "wss" : "ws";
   const wsHost = serverUrl.replace(/^https?:\/\//, "");
-  const wsUrl = `${wsProto}://${wsHost}/api/v1/ws?token=${apiKey}`;
+  const wsUrl = `${wsProto}://${wsHost}/api/v1/ws`;
 
   // Dynamic import ws (Node.js WebSocket library)
   const { default: WebSocket } = await import("ws");
@@ -99,7 +99,9 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
     if (isShuttingDown) return;
 
     logVerbose("ani: connecting WebSocket...");
-    ws = new WebSocket(wsUrl);
+    ws = new WebSocket(wsUrl, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
 
     let pingTimer: ReturnType<typeof setInterval> | null = null;
 
