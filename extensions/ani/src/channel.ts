@@ -6,7 +6,7 @@ import {
   applyAccountNameToChannelSection,
   buildChannelConfigSchema,
   type ChannelPlugin,
-} from "openclaw/plugin-sdk";
+} from "./sdk-compat.js";
 
 import { AniConfigSchema } from "./config-schema.js";
 import type { CoreConfig, ResolvedAniAccount } from "./types.js";

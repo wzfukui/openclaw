@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import type { ChannelAgentTool } from "openclaw/plugin-sdk";
+import type { ChannelAgentTool } from "./sdk-compat.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 

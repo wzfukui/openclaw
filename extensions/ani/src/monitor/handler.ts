@@ -2,7 +2,7 @@ import {
   createReplyPrefixContext,
   createTypingCallbacks,
   type RuntimeEnv,
-} from "openclaw/plugin-sdk";
+} from "../sdk-compat.js";
 
 import { randomBytes } from "node:crypto";
 

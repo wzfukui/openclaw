@@ -1,5 +1,4 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import { emptyPluginConfigSchema, type OpenClawPluginApi } from "./src/sdk-compat.js";
 
 import { aniPlugin } from "./src/channel.js";
 import { setAniRuntime } from "./src/runtime.js";

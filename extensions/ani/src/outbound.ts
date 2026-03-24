@@ -1,4 +1,4 @@
-import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
+import type { ChannelOutboundAdapter } from "./sdk-compat.js";
 
 import { getAniRuntime } from "./runtime.js";
 import { sendAniMessage, uploadAniFile, toggleAniReaction } from "./monitor/send.js";
