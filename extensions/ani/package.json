@@ -1,8 +1,35 @@
 {
-  "name": "@openclaw/ani",
-  "version": "2026.3.17",
+  "name": "ani-openclaw-plugin",
+  "version": "2026.3.27",
   "type": "module",
   "description": "ANI Agent-Native IM channel plugin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wzfukui/openclaw.git",
+    "directory": "extensions/ani"
+  },
+  "homepage": "https://github.com/wzfukui/openclaw/tree/main/extensions/ani",
+  "bugs": {
+    "url": "https://github.com/wzfukui/openclaw/issues"
+  },
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "src/channel.ts",
+    "src/config-schema.ts",
+    "src/monitor",
+    "src/outbound.ts",
+    "src/runtime.ts",
+    "src/sdk-compat.ts",
+    "src/tools.ts",
+    "src/types.ts",
+    "src/utils.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -18,7 +45,7 @@
       "quickstartAllowFrom": false
     },
     "install": {
-      "npmSpec": "@openclaw/ani",
+      "npmSpec": "ani-openclaw-plugin",
       "localPath": "extensions/ani",
       "defaultChoice": "npm"
     }
