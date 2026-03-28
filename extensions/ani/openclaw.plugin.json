@@ -13,11 +13,12 @@
       "label": "API Key",
       "placeholder": "aim_...",
       "sensitive": true,
-      "help": "Permanent API key (aim_ prefix). Bootstrap keys (aimb_) are not supported."
+      "help": "Permanent ANI API key (aim_ prefix). Legacy aimb_ keys are not supported."
     },
     "entityId": {
       "label": "Bot Entity ID",
-      "help": "Numeric entity ID on the ANI server (auto-detected if omitted)"
+      "help": "Legacy numeric override. Usually leave empty and let ANI auto-detect.",
+      "advanced": true
     },
     "enabled": {
       "label": "Enabled",

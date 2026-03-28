@@ -6,10 +6,10 @@ export type AniConfig = {
   /** ANI server base URL, e.g. "https://agent-native.im" */
   serverUrl?: string;
 
-  /** Permanent API key (aim_ prefix). Bootstrap keys (aimb_) are NOT supported. */
+  /** Permanent API key (aim_ prefix). Legacy aimb_ keys are not supported. */
   apiKey?: string;
 
-  /** Entity ID on the ANI server (numeric) */
+  /** Legacy numeric entity ID override. Usually leave empty and let ANI auto-detect. */
   entityId?: number;
 
   /** DM policy — ANI routes all messages through conversations, so "open" is default */

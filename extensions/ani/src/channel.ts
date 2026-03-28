@@ -115,7 +115,7 @@ export const aniPlugin: ChannelPlugin<ResolvedAniAccount> = {
       if (!input.apiKey?.trim()) return "ANI requires --api-key (permanent aim_ key)";
       const key = input.apiKey?.trim() ?? "";
       if (key.startsWith("aimb_")) {
-        return "ANI requires a permanent key (aim_ prefix), not a bootstrap key (aimb_). Connect via WebSocket first to upgrade.";
+        return "ANI requires a permanent key (aim_ prefix). Legacy aimb_ keys are no longer supported.";
       }
       return null;
     },

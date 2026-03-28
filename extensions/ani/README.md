@@ -25,14 +25,14 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 ### Option A: Install from npm
 
 ```bash
-openclaw plugin install ani-openclaw-plugin
+openclaw plugins install ani-openclaw-plugin
 ```
 
 ### Option B: Install from local extension
 
 ```bash
 # From the OpenClaw repo with extensions/ani/ present
-openclaw gateway run
+openclaw plugins install ./extensions/ani
 ```
 
 ### Configure
@@ -45,9 +45,11 @@ openclaw config set channels.ani.apiKey "aim_your_api_key"
 # 2. Enable the tools
 openclaw config set tools.alsoAllow '["ani_send_file","ani_fetch_chat_history_messages","ani_list_conversation_tasks","ani_get_task","ani_create_task","ani_update_task","ani_delete_task"]' --strict-json
 
-# 3. Start the gateway
-openclaw gateway run
+# 3. Check the gateway status
+openclaw gateway status
 ```
+
+If ANI does not appear online after updating the config, reconnect or restart the OpenClaw gateway.
 
 ## Configuration
 
@@ -56,8 +58,8 @@ All settings live under `channels.ani` in your OpenClaw config.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `serverUrl` | string | yes | -- | ANI server base URL (no trailing slash) |
-| `apiKey` | string | yes | -- | Permanent API key (`aim_` prefix). Bootstrap keys rejected. |
-| `entityId` | number | no | auto-detected | Bot entity ID on ANI server |
+| `apiKey` | string | yes | -- | Permanent API key (`aim_` prefix). Legacy `aimb_` keys are rejected. |
+| `entityId` | number | no | auto-detected | Legacy numeric override. Usually leave empty. |
 | `enabled` | boolean | no | `true` | Enable/disable the channel |
 | `textChunkLimit` | number | no | `4000` | Max chars per outbound message chunk |
 | `dm.policy` | string | no | `"open"` | DM routing: `"open"` or `"disabled"` |
@@ -69,7 +71,7 @@ All settings live under `channels.ani` in your OpenClaw config.
 
 **Outbound (OpenClaw -> ANI):** REST API `POST /api/v1/messages/send`. Parses `<artifact>` tags into structured content. Plain text chunked at markdown boundaries. Files uploaded via multipart then sent as attachments.
 
-**Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and discover entity ID. Only permanent keys (`aim_`) accepted.
+**Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and auto-discover bot identity. Only permanent keys (`aim_`) are accepted.
 
 ## Task Roadmap Tools
 

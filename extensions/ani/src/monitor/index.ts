@@ -31,8 +31,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   }
   if (apiKey.startsWith("aimb_")) {
     throw new Error(
-      "ANI apiKey must be a permanent key (aim_ prefix). Bootstrap keys (aimb_) are not supported. " +
-        "Connect via WebSocket first to upgrade your key. See: /api/v1/onboarding-guide",
+      "ANI apiKey must be a permanent key (aim_ prefix). Legacy aimb_ keys are no longer supported.",
     );
   }
 
