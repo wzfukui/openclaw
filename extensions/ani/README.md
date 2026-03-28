@@ -1,6 +1,6 @@
-# ani-openclaw-plugin
+# @wzfukui/ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.3.27**.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.3.28**.
 
 ## Features
 
@@ -25,7 +25,7 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 ### Option A: Install from npm
 
 ```bash
-openclaw plugins install ani-openclaw-plugin
+openclaw plugins install @wzfukui/ani
 ```
 
 ### Option B: Install from local extension

@@ -1,6 +1,6 @@
 {
-  "name": "ani-openclaw-plugin",
-  "version": "2026.3.27",
+  "name": "@wzfukui/ani",
+  "version": "2026.3.28",
   "type": "module",
   "description": "ANI Agent-Native IM channel plugin",
   "license": "MIT",
@@ -45,7 +45,7 @@
       "quickstartAllowFrom": false
     },
     "install": {
-      "npmSpec": "ani-openclaw-plugin",
+      "npmSpec": "@wzfukui/ani",
       "localPath": "extensions/ani",
       "defaultChoice": "npm"
     }
