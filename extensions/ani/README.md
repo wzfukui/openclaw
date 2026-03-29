@@ -1,6 +1,6 @@
-# @openclaw/ani
+# ANI OpenClaw Plugin
 
-OpenClaw channel plugin for Agent-Native IM (ANI), a messaging platform built for human and AI bot collaboration. Version **2026.3.28**.
+OpenClaw channel plugin for Agent-Native IM (ANI), a messaging platform built for human and AI bot collaboration.
 
 ## Features
 
@@ -20,13 +20,37 @@ OpenClaw channel plugin for Agent-Native IM (ANI), a messaging platform built fo
 - **Config hot reload** -- changes under `channels.ani` auto-detected; most take effect without restart
 - **Multi-agent routing** -- route specific conversations to dedicated OpenClaw agents with separate workspaces
 
-## Quick Start
+## Recommended Install
+
+Install ANI through the installer package:
+
+```bash
+npx -y openclaw-ani-installer install
+```
+
+Update an existing installation:
+
+```bash
+npx -y openclaw-ani-installer update
+```
+
+Run a health check:
+
+```bash
+npx -y openclaw-ani-installer doctor
+```
+
+This is the recommended path for end users. Older OpenClaw releases can have compatibility issues when installing third-party scoped npm plugins directly.
+
+## Advanced Install Paths
 
 ### Option A: Install from npm
 
 ```bash
 openclaw plugins install @openclaw/ani
 ```
+
+Use this only if your OpenClaw version already supports direct third-party npm plugin installs.
 
 ### Option B: Install from local extension
 
@@ -152,3 +176,7 @@ Find conversation IDs in: ANI web URL bar, gateway logs (`ani: inbound conv=<id>
 # From OpenClaw repo root
 npx vitest run --config vitest.extensions.config.ts extensions/ani/
 ```
+
+## Validation
+
+- [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md)
