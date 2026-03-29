@@ -1,7 +1,7 @@
 import type { AniInteraction, AniAttachment } from "./monitor/send.js";
-import type { ChannelOutboundAdapter } from "./sdk-compat.js";
 import { sendAniMessage, uploadAniFile, toggleAniReaction } from "./monitor/send.js";
 import { getAniRuntime } from "./runtime.js";
+import type { ChannelOutboundAdapter } from "./sdk-compat.js";
 import { resolveAniCredentials } from "./utils.js";
 
 type AniSendMediaParams = Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0];
@@ -122,6 +122,7 @@ export const aniOutbound: ChannelOutboundAdapter = {
           apiKey,
           buffer,
           filename,
+          conversationId,
         });
 
         // Determine attachment type from MIME

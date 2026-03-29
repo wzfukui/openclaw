@@ -81,12 +81,16 @@ export async function uploadAniFile(opts: {
   apiKey: string;
   buffer: Buffer | Uint8Array;
   filename: string;
+  conversationId?: number;
 }): Promise<AniFileUploadResult> {
   const url = `${opts.serverUrl}/api/v1/files/upload`;
   const form = new FormData();
   const bytes = Uint8Array.from(opts.buffer);
   const blob = new Blob([bytes]);
   form.append("file", blob, opts.filename);
+  if (opts.conversationId) {
+    form.append("conversation_id", String(opts.conversationId));
+  }
 
   const res = await fetchWithRetry(url, {
     method: "POST",

@@ -1,8 +1,7 @@
-import { Type } from "@sinclair/typebox";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Type } from "@sinclair/typebox";
 import type { AniAttachment } from "./monitor/send.js";
-import type { ChannelAgentTool } from "./sdk-compat.js";
 import {
   createAniTask,
   deleteAniTask,
@@ -13,6 +12,7 @@ import {
   uploadAniFile,
   type AniTask,
 } from "./monitor/send.js";
+import type { ChannelAgentTool } from "./sdk-compat.js";
 import { resolveAniCredentials, getMimeType, messageTextOf } from "./utils.js";
 
 const TASK_STATUS_VALUES = ["pending", "in_progress", "done", "cancelled", "handed_over"] as const;
@@ -157,7 +157,13 @@ export function createSendFileTool(): ChannelAgentTool {
         const mimeType = getMimeType(filename);
 
         // Upload to ANI backend
-        const uploaded = await uploadAniFile({ serverUrl, apiKey, buffer, filename });
+        const uploaded = await uploadAniFile({
+          serverUrl,
+          apiKey,
+          buffer,
+          filename,
+          conversationId,
+        });
 
         // Determine attachment type from MIME
         let attachType = "file";
