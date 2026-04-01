@@ -1,3 +1,8 @@
+import {
+  buildChannelOutboundSessionRoute,
+  stripChannelTargetPrefix,
+  type ChannelOutboundSessionRouteParams,
+} from "openclaw/plugin-sdk/core";
 import type { AniInteraction, AniAttachment } from "./monitor/send.js";
 import { sendAniMessage, uploadAniFile, toggleAniReaction } from "./monitor/send.js";
 import { getAniRuntime } from "./runtime.js";
@@ -7,17 +12,64 @@ import { resolveAniCredentials } from "./utils.js";
 type AniSendMediaParams = Parameters<NonNullable<ChannelOutboundAdapter["sendMedia"]>>[0];
 type AniChunker = NonNullable<ChannelOutboundAdapter["chunker"]>;
 
+export function looksLikeAniConversationId(raw: string): boolean {
+  return /^(?:ani:)?(?:conv|conversation|channel):[1-9]\d*$|^[1-9]\d*$/.test(raw.trim());
+}
+
+export function normalizeAniTarget(raw: string): string | null {
+  try {
+    return `ani:conversation:${parseConversationId(raw)}`;
+  } catch {
+    return null;
+  }
+}
+
 /** Parse conversation ID from target string like "ani:conv:123" or "123". */
 export function parseConversationId(to: string): number {
   const cleaned = to
     .replace(/^ani:/i, "")
     .replace(/^conv:/i, "")
+    .replace(/^conversation:/i, "")
     .replace(/^channel:/i, "")
     .trim();
   if (!/^[1-9]\d*$/.test(cleaned)) {
     throw new Error(`ANI outbound: invalid conversation target "${to}"`);
   }
   return Number.parseInt(cleaned, 10);
+}
+
+export function resolveAniOutboundSessionRoute(params: ChannelOutboundSessionRouteParams) {
+  const normalizedTarget = normalizeAniTarget(params.resolvedTarget?.to ?? params.target);
+  if (!normalizedTarget) {
+    return null;
+  }
+  const rawId = stripChannelTargetPrefix(normalizedTarget, "ani")
+    .replace(/^conversation:/i, "")
+    .replace(/^conv:/i, "")
+    .replace(/^channel:/i, "")
+    .trim();
+  if (!rawId) {
+    return null;
+  }
+  const peerKind =
+    params.resolvedTarget?.kind === "user"
+      ? "direct"
+      : params.resolvedTarget?.kind === "group"
+        ? "group"
+        : "channel";
+  return buildChannelOutboundSessionRoute({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: "ani",
+    accountId: params.accountId,
+    peer: {
+      kind: peerKind,
+      id: rawId,
+    },
+    chatType: peerKind,
+    from: `ani:conversation:${rawId}`,
+    to: `ani:conversation:${rawId}`,
+  });
 }
 
 /**
@@ -40,6 +92,7 @@ export async function sendAniTextWithExtras(opts: {
     text: opts.text,
     mentions: opts.mentions,
     interaction: opts.interaction,
+    logger: getAniRuntime().logging.getChildLogger({ module: "ani-outbound" }),
   });
   return {
     channel: "ani",
@@ -72,6 +125,7 @@ export const aniOutbound: ChannelOutboundAdapter = {
       apiKey,
       conversationId,
       text,
+      logger: getAniRuntime().logging.getChildLogger({ module: "ani-outbound" }),
     });
     return {
       channel: "ani",
@@ -156,6 +210,7 @@ export const aniOutbound: ChannelOutboundAdapter = {
           apiKey,
           conversationId,
           text: fallbackText,
+          logger: runtime.logging.getChildLogger({ module: "ani-outbound" }),
         });
         return {
           channel: "ani",
@@ -175,6 +230,7 @@ export const aniOutbound: ChannelOutboundAdapter = {
       text: text ?? "",
       attachments,
       contentType,
+      logger: getAniRuntime().logging.getChildLogger({ module: "ani-outbound" }),
     });
     return {
       channel: "ani",

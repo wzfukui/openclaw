@@ -1,3 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 /**
  * Fetch wrapper with exponential backoff retry for transient failures.
  * Retries on network errors, 429 (rate limit), and 502/503/504 server errors.
@@ -125,29 +130,123 @@ export interface AniAttachment {
   content?: string;
 }
 
-/** Send a message to an ANI conversation via REST API. */
-export async function sendAniMessage(opts: {
+type AniSendMessageOptions = {
   serverUrl: string;
   apiKey: string;
   conversationId: number;
   text: string;
-  /** If provided, sends as content_type "artifact" instead of plain text. */
   artifact?: AniArtifact;
-  /** Entity IDs to @mention (must be conversation participants). */
   mentions?: number[];
-  /** Interaction layer for interactive cards (approval/selection UI). */
   interaction?: AniInteraction;
-  /** File/media attachments to include with the message. */
   attachments?: AniAttachment[];
-  /** Content type override (e.g. "image", "audio", "file", "video"). */
   contentType?: string;
-  /** Message ID to reply to. */
   replyTo?: number;
-  /** Stream identifier for streaming responses. */
   streamId?: string;
-  /** Status layer for progress updates during streaming. */
   statusLayer?: { phase: string; progress: number; text: string };
-}): Promise<{ messageId: number }> {
+  accountId?: string;
+  logger?: {
+    info?: (message: string) => void;
+    warn?: (message: string) => void;
+  };
+};
+
+type AniPendingMessage = {
+  id: string;
+  createdAt: string;
+  accountId: string;
+  serverUrl: string;
+  conversationId: number;
+  text: string;
+  artifact?: AniArtifact;
+  mentions?: number[];
+  interaction?: AniInteraction;
+  attachments?: AniAttachment[];
+  contentType?: string;
+  replyTo?: number;
+  streamId?: string;
+  statusLayer?: { phase: string; progress: number; text: string };
+  attempts: number;
+  lastError?: string;
+};
+
+let pendingFlushPromise: Promise<void> | null = null;
+
+function pendingOutboundPath(): string {
+  return path.join(os.homedir(), ".openclaw", "channels", "ani", "pending-outbound.json");
+}
+
+async function readPendingMessages(): Promise<AniPendingMessage[]> {
+  const file = pendingOutboundPath();
+  try {
+    const raw = await readFile(file, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as AniPendingMessage[]) : [];
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+async function writePendingMessages(items: AniPendingMessage[]): Promise<void> {
+  const file = pendingOutboundPath();
+  const dir = path.dirname(file);
+  await mkdir(dir, { recursive: true });
+  if (items.length === 0) {
+    await rm(file, { force: true });
+    return;
+  }
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, JSON.stringify(items, null, 2), "utf-8");
+  await rename(tmp, file);
+}
+
+function toPendingMessage(opts: AniSendMessageOptions, lastError: string): AniPendingMessage {
+  return {
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    accountId: opts.accountId ?? "default",
+    serverUrl: opts.serverUrl,
+    conversationId: opts.conversationId,
+    text: opts.text,
+    ...(opts.artifact ? { artifact: opts.artifact } : {}),
+    ...(opts.mentions?.length ? { mentions: opts.mentions } : {}),
+    ...(opts.interaction ? { interaction: opts.interaction } : {}),
+    ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
+    ...(opts.contentType ? { contentType: opts.contentType } : {}),
+    ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+    ...(opts.streamId ? { streamId: opts.streamId } : {}),
+    ...(opts.statusLayer ? { statusLayer: opts.statusLayer } : {}),
+    attempts: 1,
+    lastError,
+  };
+}
+
+function isRetryableSendError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /ANI send failed \((429|502|503|504)\)/.test(message) ||
+    /fetchWithRetry: all attempts failed/.test(message) ||
+    /network/i.test(message) ||
+    /timed out/i.test(message) ||
+    /ECONN|EHOST|ENET|socket|TLS|fetch failed/i.test(message)
+  );
+}
+
+async function enqueuePendingMessage(
+  opts: AniSendMessageOptions,
+  lastError: string,
+): Promise<string> {
+  const pending = await readPendingMessages();
+  const item = toPendingMessage(opts, lastError);
+  pending.push(item);
+  await writePendingMessages(pending);
+  return item.id;
+}
+
+async function sendAniMessageNow(
+  opts: Omit<AniSendMessageOptions, "accountId" | "logger">,
+): Promise<{ messageId: number }> {
   const url = `${opts.serverUrl}/api/v1/messages/send`;
 
   const layers: Record<string, unknown> = opts.artifact
@@ -161,7 +260,6 @@ export async function sendAniMessage(opts: {
     layers.status = opts.statusLayer;
   }
 
-  // Determine content_type: artifact > explicit contentType > default (omit for text)
   let contentType: string | undefined;
   if (opts.artifact) {
     contentType = "artifact";
@@ -195,6 +293,85 @@ export async function sendAniMessage(opts: {
   const json = (await res.json()) as { data?: { id?: number }; id?: number };
   const msg = json.data ?? json;
   return { messageId: msg.id ?? 0 };
+}
+
+export async function flushPendingAniMessages(opts: {
+  serverUrl: string;
+  apiKey: string;
+  accountId?: string;
+  logger?: {
+    info?: (message: string) => void;
+    warn?: (message: string) => void;
+  };
+}): Promise<void> {
+  if (pendingFlushPromise) {
+    return pendingFlushPromise;
+  }
+  pendingFlushPromise = (async () => {
+    const accountId = opts.accountId ?? "default";
+    const pending = await readPendingMessages();
+    if (pending.length === 0) return;
+
+    const keep: AniPendingMessage[] = [];
+    for (const item of pending) {
+      if (item.accountId !== accountId || item.serverUrl !== opts.serverUrl) {
+        keep.push(item);
+        continue;
+      }
+      try {
+        await sendAniMessageNow({
+          serverUrl: opts.serverUrl,
+          apiKey: opts.apiKey,
+          conversationId: item.conversationId,
+          text: item.text,
+          artifact: item.artifact,
+          mentions: item.mentions,
+          interaction: item.interaction,
+          attachments: item.attachments,
+          contentType: item.contentType,
+          replyTo: item.replyTo,
+          streamId: item.streamId,
+          statusLayer: item.statusLayer,
+        });
+        opts.logger?.info?.(
+          `ani: flushed queued outbound message id=${item.id} conv=${item.conversationId} attempts=${item.attempts}`,
+        );
+      } catch (err) {
+        const lastError = err instanceof Error ? err.message : String(err);
+        keep.push({
+          ...item,
+          attempts: item.attempts + 1,
+          lastError,
+        });
+        opts.logger?.warn?.(
+          `ani: failed to flush queued outbound message id=${item.id} conv=${item.conversationId}: ${lastError}`,
+        );
+      }
+    }
+    await writePendingMessages(keep);
+  })().finally(() => {
+    pendingFlushPromise = null;
+  });
+  return pendingFlushPromise;
+}
+
+/** Send a message to an ANI conversation via REST API. */
+export async function sendAniMessage(
+  opts: AniSendMessageOptions,
+): Promise<{ messageId: number; queued?: boolean }> {
+  try {
+    return await sendAniMessageNow(opts);
+  } catch (err) {
+    if (!isRetryableSendError(err)) {
+      throw err;
+    }
+    const lastError = err instanceof Error ? err.message : String(err);
+    const queuedId = await enqueuePendingMessage(opts, lastError);
+    opts.logger?.warn?.(
+      `ani: queued outbound message id=${queuedId} conv=${opts.conversationId} after send failure: ${lastError}`,
+    );
+    return { messageId: 0, queued: true };
+  }
 }
 
 /** Fetch conversation details (title, description, prompt, participants). */

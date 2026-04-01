@@ -1,6 +1,10 @@
-import type { CoreConfig, ResolvedAniAccount } from "./types.js";
 import { AniConfigSchema } from "./config-schema.js";
-import { aniOutbound } from "./outbound.js";
+import {
+  aniOutbound,
+  looksLikeAniConversationId,
+  normalizeAniTarget,
+  resolveAniOutboundSessionRoute,
+} from "./outbound.js";
 import {
   DEFAULT_ACCOUNT_ID,
   normalizeAccountId,
@@ -11,6 +15,7 @@ import {
   type ChannelPlugin,
   type OpenClawConfig,
 } from "./sdk-compat.js";
+import type { CoreConfig, ResolvedAniAccount } from "./types.js";
 import { normalizeAniServerUrl } from "./utils.js";
 
 type AniSetupInput = {
@@ -164,6 +169,15 @@ export const aniPlugin: ChannelPlugin<ResolvedAniAccount> = {
 
   streaming: {
     blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
+  },
+
+  messaging: {
+    normalizeTarget: (raw) => normalizeAniTarget(raw) ?? undefined,
+    resolveOutboundSessionRoute: (params) => resolveAniOutboundSessionRoute(params),
+    targetResolver: {
+      looksLikeId: looksLikeAniConversationId,
+      hint: "<conversationId>",
+    },
   },
 
   outbound: aniOutbound,

@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
-import type { CoreConfig } from "../types.js";
+import { dispatchInboundMessage } from "openclaw/plugin-sdk/reply-runtime";
 import {
   createReplyPrefixContext,
   createTypingCallbacks,
   type OpenClawConfig,
   type RuntimeEnv,
 } from "../sdk-compat.js";
+import type { CoreConfig } from "../types.js";
 import { messageTextOf } from "../utils.js";
 import { createInboundDebouncer } from "./debounce.js";
 import {
@@ -846,7 +847,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
             CommandAuthorized: true,
             CommandSource: "text" as const,
             OriginatingChannel: "ani" as const,
-            OriginatingTo: `ani:conv:${conversationId}`,
+            OriginatingTo: `ani:conversation:${conversationId}`,
           });
 
           trackMessageSession(messageIds, ctxPayload.SessionKey ?? route.sessionKey);
@@ -908,7 +909,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           const streamAbortController = new AbortController();
           activeStreams.set(streamId, { controller: streamAbortController, conversationId });
 
-          const { dispatcher, replyOptions, markDispatchIdle } =
+          const { dispatcher, replyOptions, markDispatchIdle, markRunComplete } =
             core.channel.reply.createReplyDispatcherWithTyping({
               responsePrefix: prefixContext.responsePrefix,
               responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
@@ -958,6 +959,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                             text: trimmed,
                             streamId,
                             mentions: autoMentions,
+                            accountId,
+                            logger,
                           });
                         }
                       }
@@ -970,6 +973,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                           artifact: seg.artifact,
                           streamId,
                           mentions: autoMentions,
+                          accountId,
+                          logger,
                         });
                       }
                     } catch (segErr) {
@@ -990,6 +995,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
                       text: trimmed,
                       streamId,
                       mentions: autoMentions,
+                      accountId,
+                      logger,
                     });
                   }
                 }
@@ -1010,16 +1017,23 @@ export function createAniMessageHandler(params: AniHandlerParams) {
               onIdle: typingCallbacks.onIdle,
             });
 
-          const { queuedFinal } = await core.channel.reply.dispatchReplyFromConfig({
-            ctx: ctxPayload,
-            cfg: cfg as OpenClawConfig,
-            dispatcher,
-            replyOptions: {
-              ...replyOptions,
-              onModelSelected: prefixContext.onModelSelected,
-            },
-          });
-          markDispatchIdle();
+          let queuedFinal = false;
+          try {
+            const dispatchResult = await dispatchInboundMessage({
+              ctx: ctxPayload,
+              cfg: cfg as OpenClawConfig,
+              dispatcher,
+              replyOptions: {
+                ...replyOptions,
+                onModelSelected: prefixContext.onModelSelected,
+                abortSignal: streamAbortController.signal,
+              },
+            });
+            queuedFinal = dispatchResult.queuedFinal;
+          } finally {
+            markRunComplete();
+            markDispatchIdle();
+          }
 
           if (queuedFinal) didSendReply = true;
 
@@ -1041,6 +1055,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
               conversationId,
               text: "No response generated. Please try again.",
               streamId,
+              accountId,
+              logger,
             });
           }
 

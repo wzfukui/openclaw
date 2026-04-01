@@ -189,6 +189,7 @@ export function createSendFileTool(): ChannelAgentTool {
           text: caption || `📎 ${filename}`,
           attachments,
           contentType: attachType,
+          accountId: "default",
         });
 
         return textToolResult(

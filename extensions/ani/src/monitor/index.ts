@@ -1,10 +1,10 @@
 import { format } from "node:util";
+import { getAniRuntime } from "../runtime.js";
 import type { RuntimeEnv } from "../sdk-compat.js";
 import type { CoreConfig } from "../types.js";
-import { getAniRuntime } from "../runtime.js";
 import { normalizeAniServerUrl } from "../utils.js";
 import { createAniMessageHandler } from "./handler.js";
-import { verifyAniConnection } from "./send.js";
+import { flushPendingAniMessages, verifyAniConnection } from "./send.js";
 
 export type MonitorAniOpts = {
   runtime?: RuntimeEnv;
@@ -80,6 +80,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isShuttingDown = false;
   const PING_INTERVAL_MS = 30000;
+  const FLUSH_INTERVAL_MS = 60000;
 
   // Exponential backoff with jitter for reconnection
   const BACKOFF_BASE_MS = 1000;
@@ -102,17 +103,42 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
     });
 
     let pingTimer: ReturnType<typeof setInterval> | null = null;
+    let flushTimer: ReturnType<typeof setInterval> | null = null;
 
     ws.on("open", () => {
       logger.info("ani: WebSocket connected");
       // Reset backoff on successful connection
       backoffAttempt = 0;
+      void flushPendingAniMessages({
+        serverUrl,
+        apiKey,
+        accountId: opts.accountId ?? "default",
+        logger: {
+          info: (message) => logger.info(message),
+          warn: (message) => logger.warn(message),
+        },
+      }).catch((err) => {
+        logger.warn(`ani: failed to flush pending outbound messages: ${String(err)}`);
+      });
       // Start ping keep-alive
       pingTimer = setInterval(() => {
         if (ws?.readyState === WebSocket.OPEN) {
           ws.ping();
         }
       }, PING_INTERVAL_MS);
+      flushTimer = setInterval(() => {
+        void flushPendingAniMessages({
+          serverUrl,
+          apiKey,
+          accountId: opts.accountId ?? "default",
+          logger: {
+            info: (message) => logger.info(message),
+            warn: (message) => logger.warn(message),
+          },
+        }).catch((err) => {
+          logger.warn(`ani: periodic flush failed: ${String(err)}`);
+        });
+      }, FLUSH_INTERVAL_MS);
     });
 
     ws.on("pong", () => {
@@ -132,6 +158,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
 
     ws.on("close", (code, reason) => {
       if (pingTimer) clearInterval(pingTimer);
+      if (flushTimer) clearInterval(flushTimer);
       if (isShuttingDown) return;
       const delay = getReconnectDelay();
       backoffAttempt++;

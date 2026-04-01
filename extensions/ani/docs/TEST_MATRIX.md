@@ -69,6 +69,20 @@ Expected:
 - inbound `reply_to` metadata is resolved into visible parent-message context
 - agent can tell what message the user is replying to
 
+### Case ANI-PLUGIN-013: Final replies return through the standard outbound route
+
+Steps:
+
+1. Trigger an ANI conversation that causes OpenClaw to run a longer Codex or tool-backed task
+2. Wait for the task to finish and the final assistant reply to be generated
+
+Expected:
+
+- intermediate ANI progress/status messages may appear during execution
+- the final assistant reply is delivered back into the same ANI conversation
+- the reply does not depend on a private fallback path or manual resend
+- outbound routing uses the ANI conversation target consistently for follow-up sends
+
 ## 3. File And Attachment Flow
 
 ### Case ANI-PLUGIN-020: `ani_send_file` uploads with conversation binding

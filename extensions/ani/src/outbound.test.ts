@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseConversationId } from "./outbound.js";
+import type { OpenClawConfig } from "./sdk-compat.js";
+import {
+  normalizeAniTarget,
+  parseConversationId,
+  resolveAniOutboundSessionRoute,
+} from "./outbound.js";
 
 describe("parseConversationId", () => {
   it("parses a plain numeric string", () => {
@@ -16,6 +21,10 @@ describe("parseConversationId", () => {
 
   it("parses ani:channel:789 format", () => {
     expect(parseConversationId("ani:channel:789")).toBe(789);
+  });
+
+  it("parses ani:conversation:321 format", () => {
+    expect(parseConversationId("ani:conversation:321")).toBe(321);
   });
 
   it("strips whitespace around the number", () => {
@@ -40,5 +49,87 @@ describe("parseConversationId", () => {
 
   it("throws on floating point", () => {
     expect(() => parseConversationId("3.14")).toThrow("invalid conversation target");
+  });
+});
+
+describe("normalizeAniTarget", () => {
+  it("normalizes shorthand conversation targets", () => {
+    expect(normalizeAniTarget("ani:conv:123")).toBe("ani:conversation:123");
+    expect(normalizeAniTarget("123")).toBe("ani:conversation:123");
+  });
+
+  it("returns null for invalid targets", () => {
+    expect(normalizeAniTarget("")).toBeNull();
+    expect(normalizeAniTarget("abc")).toBeNull();
+  });
+});
+
+describe("resolveAniOutboundSessionRoute", () => {
+  const cfg: OpenClawConfig = {
+    session: {
+      dmScope: "main",
+    },
+  };
+
+  it("builds a stable outbound route for ANI conversation ids", () => {
+    const route = resolveAniOutboundSessionRoute({
+      cfg,
+      agentId: "ani-agent",
+      accountId: "default",
+      target: "ani:conv:8829587447915732",
+    });
+
+    expect(route).toMatchObject({
+      chatType: "channel",
+      from: "ani:conversation:8829587447915732",
+      to: "ani:conversation:8829587447915732",
+      peer: { kind: "channel", id: "8829587447915732" },
+    });
+    expect(route?.sessionKey).toContain(":ani:channel:8829587447915732");
+  });
+
+  it("preserves direct routes when target resolution says the target is a user", () => {
+    const route = resolveAniOutboundSessionRoute({
+      cfg,
+      agentId: "ani-agent",
+      accountId: "default",
+      target: "ani:conversation:42",
+      resolvedTarget: {
+        to: "ani:conversation:42",
+        kind: "user",
+        source: "normalized",
+      },
+    });
+
+    expect(route).toMatchObject({
+      chatType: "direct",
+      peer: { kind: "direct", id: "42" },
+    });
+    expect(route?.sessionKey).toBe("agent:ani-agent:main");
+    expect(route?.baseSessionKey).toBe("agent:ani-agent:main");
+  });
+
+  it("uses scoped direct session keys when dmScope requires per-peer routing", () => {
+    const route = resolveAniOutboundSessionRoute({
+      cfg: {
+        session: {
+          dmScope: "per-channel-peer",
+        },
+      } as OpenClawConfig,
+      agentId: "ani-agent",
+      accountId: "default",
+      target: "ani:conversation:42",
+      resolvedTarget: {
+        to: "ani:conversation:42",
+        kind: "user",
+        source: "normalized",
+      },
+    });
+
+    expect(route).toMatchObject({
+      chatType: "direct",
+      peer: { kind: "direct", id: "42" },
+    });
+    expect(route?.sessionKey).toContain(":ani:direct:42");
   });
 });
