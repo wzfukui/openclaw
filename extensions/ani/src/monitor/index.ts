@@ -12,6 +12,21 @@ export type MonitorAniOpts = {
   accountId?: string | null;
 };
 
+export const ANI_PING_INTERVAL_MS = 30000;
+export const ANI_FLUSH_INTERVAL_MS = 60000;
+export const ANI_STALE_SOCKET_TIMEOUT_MS = 120000;
+export const ANI_STALE_SOCKET_CHECK_INTERVAL_MS = 15000;
+
+export function isAniSocketStale(opts: {
+  now: number;
+  lastPongAt: number;
+  lastMessageAt: number;
+  timeoutMs?: number;
+}): boolean {
+  const latestSignal = Math.max(opts.lastPongAt, opts.lastMessageAt);
+  return opts.now - latestSignal > (opts.timeoutMs ?? ANI_STALE_SOCKET_TIMEOUT_MS);
+}
+
 /**
  * Gateway entry point: connects to ANI via WebSocket, listens for messages,
  * routes them through the OpenClaw AI agent, and delivers replies back.
@@ -79,9 +94,6 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   let ws: InstanceType<typeof WebSocket> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let isShuttingDown = false;
-  const PING_INTERVAL_MS = 30000;
-  const FLUSH_INTERVAL_MS = 60000;
-
   // Exponential backoff with jitter for reconnection
   const BACKOFF_BASE_MS = 1000;
   const BACKOFF_MAX_MS = 60000;
@@ -104,11 +116,16 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
 
     let pingTimer: ReturnType<typeof setInterval> | null = null;
     let flushTimer: ReturnType<typeof setInterval> | null = null;
+    let staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+    let lastPongAt = Date.now();
+    let lastMessageAt = Date.now();
 
     ws.on("open", () => {
       logger.info("ani: WebSocket connected");
       // Reset backoff on successful connection
       backoffAttempt = 0;
+      lastPongAt = Date.now();
+      lastMessageAt = lastPongAt;
       void flushPendingAniMessages({
         serverUrl,
         apiKey,
@@ -125,7 +142,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
         if (ws?.readyState === WebSocket.OPEN) {
           ws.ping();
         }
-      }, PING_INTERVAL_MS);
+      }, ANI_PING_INTERVAL_MS);
       flushTimer = setInterval(() => {
         void flushPendingAniMessages({
           serverUrl,
@@ -138,15 +155,35 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
         }).catch((err) => {
           logger.warn(`ani: periodic flush failed: ${String(err)}`);
         });
-      }, FLUSH_INTERVAL_MS);
+      }, ANI_FLUSH_INTERVAL_MS);
+      staleCheckTimer = setInterval(() => {
+        if (ws?.readyState !== WebSocket.OPEN) return;
+        if (
+          !isAniSocketStale({
+            now: Date.now(),
+            lastPongAt,
+            lastMessageAt,
+          })
+        ) {
+          return;
+        }
+        logger.warn("ani: stale WebSocket detected, forcing reconnect");
+        try {
+          ws.terminate();
+        } catch (err) {
+          logger.warn(`ani: failed to terminate stale socket: ${String(err)}`);
+        }
+      }, ANI_STALE_SOCKET_CHECK_INTERVAL_MS);
     });
 
     ws.on("pong", () => {
+      lastPongAt = Date.now();
       logVerbose("ani: pong received");
     });
 
     ws.on("message", (data) => {
       (async () => {
+        lastMessageAt = Date.now();
         const raw = typeof data === "string" ? data : data.toString("utf-8");
         logVerbose(`ani: WS message received: ${raw.slice(0, 200)}`);
         const msg = JSON.parse(raw);
@@ -159,6 +196,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
     ws.on("close", (code, reason) => {
       if (pingTimer) clearInterval(pingTimer);
       if (flushTimer) clearInterval(flushTimer);
+      if (staleCheckTimer) clearInterval(staleCheckTimer);
       if (isShuttingDown) return;
       const delay = getReconnectDelay();
       backoffAttempt++;
