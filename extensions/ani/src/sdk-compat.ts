@@ -1,6 +1,3 @@
-import { createRequire } from "node:module";
-import path from "node:path";
-
 import type {
   ChannelAgentTool,
   ChannelOutboundAdapter,
@@ -9,35 +6,11 @@ import type {
   PluginRuntime,
   RuntimeEnv,
 } from "openclaw/plugin-sdk";
-
-const require = createRequire(import.meta.url);
-
-function loadSdkRuntimeModule<T>(relativeFile: string, fallback = "openclaw/plugin-sdk"): T {
-  const rootEntry = require.resolve("openclaw/plugin-sdk");
-  const candidate = path.join(path.dirname(rootEntry), relativeFile);
-  try {
-    return require(candidate) as T;
-  } catch {
-    return require(fallback) as T;
-  }
-}
-
-const coreSdk = loadSdkRuntimeModule<{
-  DEFAULT_ACCOUNT_ID: string;
-  normalizeAccountId: (accountId?: string) => string;
-  setAccountEnabledInConfigSection: (...args: any[]) => any;
-  deleteAccountFromConfigSection: (...args: any[]) => any;
-  applyAccountNameToChannelSection: (...args: any[]) => any;
-  buildChannelConfigSchema: (...args: any[]) => any;
-  emptyPluginConfigSchema: () => unknown;
-}>("core.js");
-
-const channelRuntimeSdk = loadSdkRuntimeModule<{
-  createReplyPrefixContext: (...args: any[]) => any;
-  createTypingCallbacks: (...args: any[]) => any;
-}>("channel-runtime.js");
-
-export const {
+import {
+  createReplyPrefixContext,
+  createTypingCallbacks,
+} from "openclaw/plugin-sdk/channel-reply-pipeline";
+import {
   DEFAULT_ACCOUNT_ID,
   normalizeAccountId,
   setAccountEnabledInConfigSection,
@@ -45,9 +18,19 @@ export const {
   applyAccountNameToChannelSection,
   buildChannelConfigSchema,
   emptyPluginConfigSchema,
-} = coreSdk;
+} from "openclaw/plugin-sdk/core";
 
-export const { createReplyPrefixContext, createTypingCallbacks } = channelRuntimeSdk;
+export {
+  DEFAULT_ACCOUNT_ID,
+  normalizeAccountId,
+  setAccountEnabledInConfigSection,
+  deleteAccountFromConfigSection,
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  emptyPluginConfigSchema,
+  createReplyPrefixContext,
+  createTypingCallbacks,
+};
 
 export type {
   ChannelAgentTool,

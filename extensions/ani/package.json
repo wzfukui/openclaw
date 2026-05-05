@@ -1,8 +1,20 @@
 {
-  "name": "@openclaw/ani",
-  "version": "2026.3.17",
-  "type": "module",
+  "name": "@wzfukui/openclaw-ani",
+  "version": "2026.5.9",
   "description": "ANI Agent-Native IM channel plugin",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.41",
+    "ws": "^8.18.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "openclaw": "workspace:*"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
@@ -18,21 +30,18 @@
       "quickstartAllowFrom": false
     },
     "install": {
-      "npmSpec": "@openclaw/ani",
+      "npmSpec": "@wzfukui/openclaw-ani",
       "localPath": "extensions/ani",
       "defaultChoice": "npm"
+    },
+    "compat": {
+      "pluginApi": ">=2026.5.4"
+    },
+    "build": {
+      "openclawVersion": "2026.5.4"
+    },
+    "release": {
+      "publishToNpm": true
     }
-  },
-  "dependencies": {
-    "@sinclair/typebox": "^0.34.41",
-    "ws": "^8.18.0",
-    "zod": "^4.3.6"
-  },
-  "peerDependencies": {
-    "openclaw": "*"
-  },
-  "devDependencies": {
-    "openclaw": "workspace:*",
-    "@types/ws": "^8.5.13"
   }
 }

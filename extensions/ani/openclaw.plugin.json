@@ -1,8 +1,59 @@
 {
   "id": "ani",
-  "channels": [
-    "ani"
-  ],
+  "channels": ["ani"],
+  "contracts": {
+    "tools": [
+      "ani_send_file",
+      "ani_fetch_chat_history_messages",
+      "ani_list_conversation_tasks",
+      "ani_get_task",
+      "ani_create_task",
+      "ani_update_task",
+      "ani_delete_task"
+    ]
+  },
+  "channelConfigs": {
+    "ani": {
+      "label": "Agent-Native IM",
+      "description": "Agent-Native IM channel configuration.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "serverUrl": {
+            "type": "string"
+          },
+          "apiKey": {
+            "type": "string"
+          },
+          "entityId": {
+            "type": "number"
+          },
+          "dm": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": ["open", "disabled"]
+              }
+            }
+          },
+          "textChunkLimit": {
+            "type": "number",
+            "minimum": 100
+          }
+        },
+        "required": []
+      }
+    }
+  },
   "uiHints": {
     "serverUrl": {
       "label": "Server URL",

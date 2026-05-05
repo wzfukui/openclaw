@@ -1,6 +1,6 @@
-# @openclaw/ani
+# @wzfukui/openclaw-ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.3.17**.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.9**.
 
 ## Features
 
@@ -22,13 +22,25 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 
 ## Quick Start
 
-### Option A: Install from npm
+### Recommended: install with the ANI installer
 
 ```bash
-openclaw plugin install @openclaw/ani
+npx -y @wzfukui/openclaw-ani-installer install
+npx -y @wzfukui/openclaw-ani-installer update
+npx -y @wzfukui/openclaw-ani-installer doctor
 ```
 
-### Option B: Install from local extension
+The installer delegates to OpenClaw's native plugin installer and installs this
+package into the managed npm plugin root, typically
+`~/.openclaw/npm/node_modules/@wzfukui/openclaw-ani`.
+
+### Direct npm install
+
+```bash
+openclaw plugin install @wzfukui/openclaw-ani
+```
+
+### Local extension development
 
 ```bash
 # From the OpenClaw repo with extensions/ani/ present
@@ -53,15 +65,15 @@ openclaw gateway run
 
 All settings live under `channels.ani` in your OpenClaw config.
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `serverUrl` | string | yes | -- | ANI server base URL (no trailing slash) |
-| `apiKey` | string | yes | -- | Permanent API key (`aim_` prefix). Bootstrap keys rejected. |
-| `entityId` | number | no | auto-detected | Bot entity ID on ANI server |
-| `enabled` | boolean | no | `true` | Enable/disable the channel |
-| `textChunkLimit` | number | no | `4000` | Max chars per outbound message chunk |
-| `dm.policy` | string | no | `"open"` | DM routing: `"open"` or `"disabled"` |
-| `name` | string | no | -- | Display name for status output |
+| Field            | Type    | Required | Default       | Description                                                 |
+| ---------------- | ------- | -------- | ------------- | ----------------------------------------------------------- |
+| `serverUrl`      | string  | yes      | --            | ANI server base URL (no trailing slash)                     |
+| `apiKey`         | string  | yes      | --            | Permanent API key (`aim_` prefix). Bootstrap keys rejected. |
+| `entityId`       | number  | no       | auto-detected | Bot entity ID on ANI server                                 |
+| `enabled`        | boolean | no       | `true`        | Enable/disable the channel                                  |
+| `textChunkLimit` | number  | no       | `4000`        | Max chars per outbound message chunk                        |
+| `dm.policy`      | string  | no       | `"open"`      | DM routing: `"open"` or `"disabled"`                        |
+| `name`           | string  | no       | --            | Display name for status output                              |
 
 ## How It Works
 
@@ -132,7 +144,7 @@ bindings:
       channel: ani
       peer:
         kind: channel
-        id: "2920436443328762"  # ANI conversation ID
+        id: "2920436443328762" # ANI conversation ID
 ```
 
 Find conversation IDs in: ANI web URL bar, gateway logs (`ani: inbound conv=<id>`), or the bot's system prompt.
