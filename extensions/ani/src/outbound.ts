@@ -1,7 +1,7 @@
 import type { ChannelOutboundAdapter } from "./sdk-compat.js";
 
 import { getAniRuntime } from "./runtime.js";
-import { sendAniMessage, uploadAniFile, toggleAniReaction } from "./monitor/send.js";
+import { sendAniMessage, uploadAniFile, toggleAniReaction, fetchConversation, resolveAniMentionsFromText } from "./monitor/send.js";
 import type { AniInteraction, AniAttachment } from "./monitor/send.js";
 import { resolveAniCredentials } from "./utils.js";
 
@@ -31,12 +31,15 @@ export async function sendAniTextWithExtras(opts: {
 }): Promise<{ channel: string; messageId: string; roomId: string }> {
   const { serverUrl, apiKey } = resolveAniCredentials();
   const conversationId = parseConversationId(opts.to);
+  const mentions = opts.mentions && opts.mentions.length > 0
+    ? opts.mentions
+    : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: opts.text });
   const result = await sendAniMessage({
     serverUrl,
     apiKey,
     conversationId,
     text: opts.text,
-    mentions: opts.mentions,
+    mentions,
     interaction: opts.interaction,
   });
   return {
@@ -70,12 +73,15 @@ export const aniOutbound: ChannelOutboundAdapter = {
 
     const { serverUrl, apiKey } = resolveAniCredentials();
     const conversationId = parseConversationId(to);
+    const resolvedMentions = mentionIds && mentionIds.length > 0
+      ? mentionIds
+      : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text });
     const result = await sendAniMessage({
       serverUrl,
       apiKey,
       conversationId,
       text,
-      mentions: mentionIds,
+      mentions: resolvedMentions,
     });
     return {
       channel: "ani",
@@ -154,6 +160,7 @@ export const aniOutbound: ChannelOutboundAdapter = {
           apiKey,
           conversationId,
           text: fallbackText,
+          mentions: await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: fallbackText }),
         });
         return {
           channel: "ani",
@@ -173,6 +180,7 @@ export const aniOutbound: ChannelOutboundAdapter = {
       text: text ?? "",
       attachments,
       contentType,
+      mentions: await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: text ?? "" }),
     });
     return {
       channel: "ani",
@@ -181,3 +189,15 @@ export const aniOutbound: ChannelOutboundAdapter = {
     };
   },
 };
+
+async function resolveOutboundMentions(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  text: string;
+}): Promise<number[] | undefined> {
+  if (!opts.text.includes("@")) return undefined;
+  const conversation = await fetchConversation(opts);
+  const mentions = resolveAniMentionsFromText(opts.text, conversation?.participants);
+  return mentions.length > 0 ? mentions : undefined;
+}

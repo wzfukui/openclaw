@@ -12,6 +12,8 @@ import {
   sendAniProgress,
   fetchConversation,
   fetchConversationMemories,
+  resolveAniMentionsFromText,
+  runWithAniOutboundActivity,
   toggleAniReaction,
   type AniArtifact,
   type AniConversation,
@@ -751,24 +753,8 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       let didSendReply = false;
 
-      const participantNameMap = new Map<string, number>();
-      if (convContext?.participants) {
-        for (const p of convContext.participants) {
-          const name = p.entity?.display_name;
-          if (name && p.entity_id !== selfEntityId) {
-            participantNameMap.set(name, p.entity_id);
-          }
-        }
-      }
-
       function extractMentionsFromText(text: string): number[] {
-        const found: number[] = [];
-        for (const [name, id] of participantNameMap) {
-          if (text.includes(`@${name}`)) {
-            found.push(id);
-          }
-        }
-        return found;
+        return resolveAniMentionsFromText(text, convContext?.participants, { selfEntityId });
       }
 
       streamId = generateStreamId();
@@ -859,18 +845,21 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           onIdle: typingCallbacks.onIdle,
         });
 
-      const { queuedFinal } = await core.channel.reply.dispatchReplyFromConfig({
-        ctx: ctxPayload,
-        cfg,
-        dispatcher,
-        replyOptions: {
-          ...replyOptions,
-          onModelSelected: prefixContext.onModelSelected,
-        },
+      const { result: dispatchResult, didSend: didSendToolOutbound } = await runWithAniOutboundActivity(conversationId, async () => {
+        return core.channel.reply.dispatchReplyFromConfig({
+          ctx: ctxPayload,
+          cfg,
+          dispatcher,
+          replyOptions: {
+            ...replyOptions,
+            onModelSelected: prefixContext.onModelSelected,
+          },
+        });
       });
+      const { queuedFinal } = dispatchResult;
       markDispatchIdle();
 
-      if (queuedFinal) didSendReply = true;
+      if (queuedFinal || didSendToolOutbound) didSendReply = true;
 
       if (didSendReply) {
         const preview = text.replace(/\s+/g, " ").slice(0, 160);

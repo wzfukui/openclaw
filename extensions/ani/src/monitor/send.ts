@@ -1,3 +1,24 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const aniOutboundActivity = new AsyncLocalStorage<{ conversationId: number; didSend: boolean }>();
+
+export async function runWithAniOutboundActivity<T>(
+  conversationId: number,
+  fn: () => Promise<T>,
+): Promise<{ result: T; didSend: boolean }> {
+  const activity = { conversationId, didSend: false };
+  const result = await aniOutboundActivity.run(activity, fn);
+  return { result, didSend: activity.didSend };
+}
+
+function markAniOutboundSent(conversationId: number, opts: { statusLayer?: unknown } = {}): void {
+  if (opts.statusLayer) return;
+  const activity = aniOutboundActivity.getStore();
+  if (activity?.conversationId === conversationId) {
+    activity.didSend = true;
+  }
+}
+
 /**
  * Fetch wrapper with exponential backoff retry for transient failures.
  * Retries on network errors, 429 (rate limit), and 502/503/504 server errors.
@@ -188,6 +209,7 @@ export async function sendAniMessage(opts: {
   }
   const json = (await res.json()) as { data?: { id?: number }; id?: number };
   const msg = json.data ?? json;
+  markAniOutboundSent(opts.conversationId, { statusLayer: opts.statusLayer });
   return { messageId: msg.id ?? 0 };
 }
 
@@ -243,9 +265,36 @@ export interface AniConversation {
     entity?: {
       id: number;
       display_name?: string;
+      name?: string;
       entity_type?: string;
     };
   }>;
+}
+
+export function resolveAniMentionsFromText(
+  text: string,
+  participants: AniConversation["participants"] | undefined,
+  opts: { selfEntityId?: number } = {},
+): number[] {
+  if (!text || !participants || participants.length === 0) return [];
+
+  const mentions: number[] = [];
+  const seen = new Set<number>();
+  for (const participant of participants) {
+    const entityId = participant.entity_id ?? participant.entity?.id;
+    if (!entityId || entityId === opts.selfEntityId || seen.has(entityId)) continue;
+
+    const names = [
+      participant.entity?.display_name,
+      participant.entity?.name,
+    ].filter((name): name is string => Boolean(name?.trim()));
+
+    if (names.some((name) => text.includes(`@${name}`))) {
+      seen.add(entityId);
+      mentions.push(entityId);
+    }
+  }
+  return mentions;
 }
 
 export interface AniMemory {

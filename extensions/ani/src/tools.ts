@@ -6,8 +6,10 @@ import path from "node:path";
 import {
   createAniTask,
   deleteAniTask,
+  fetchConversation,
   getAniTask,
   listAniTasks,
+  resolveAniMentionsFromText,
   sendAniMessage,
   updateAniTask,
   uploadAniFile,
@@ -168,6 +170,7 @@ export function createSendFileTool(): ChannelAgentTool {
           text: caption || `📎 ${filename}`,
           attachments,
           contentType: attachType,
+          mentions: await resolveToolMentions({ serverUrl, apiKey, conversationId, text: caption || "" }),
         });
 
         return {
@@ -186,6 +189,18 @@ export function createSendFileTool(): ChannelAgentTool {
       }
     },
   };
+}
+
+async function resolveToolMentions(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  text: string;
+}): Promise<number[] | undefined> {
+  if (!opts.text.includes("@")) return undefined;
+  const conversation = await fetchConversation(opts);
+  const mentions = resolveAniMentionsFromText(opts.text, conversation?.participants);
+  return mentions.length > 0 ? mentions : undefined;
 }
 
 /**

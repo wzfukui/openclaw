@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { parseArtifacts, isTextFile } from "./monitor/handler.js";
+import { resolveAniMentionsFromText, runWithAniOutboundActivity, sendAniMessage } from "./monitor/send.js";
 
 describe("parseArtifacts", () => {
   it("returns a single text segment when no artifacts present", () => {
@@ -153,5 +154,84 @@ describe("isTextFile", () => {
   it("prefers MIME type when both are provided", () => {
     // text/ MIME should return true even with binary extension
     expect(isTextFile("text/plain", "file.png")).toBe(true);
+  });
+});
+
+describe("resolveAniMentionsFromText", () => {
+  const participants = [
+    {
+      entity_id: 12,
+      role: "member",
+      entity: { id: 12, display_name: "Alice", entity_type: "bot" },
+    },
+    {
+      entity_id: 13,
+      role: "member",
+      entity: { id: 13, display_name: "PotatoWire", name: "bot_potato_wire", entity_type: "bot" },
+    },
+    {
+      entity_id: 3,
+      role: "owner",
+      entity: { id: 3, display_name: "Kui Fu", entity_type: "user" },
+    },
+  ];
+
+  it("maps visible ANI group mentions to participant entity ids", () => {
+    expect(resolveAniMentionsFromText("@PotatoWire please render this", participants)).toEqual([13]);
+  });
+
+  it("uses entity.name as a fallback mention alias", () => {
+    expect(resolveAniMentionsFromText("handoff to @bot_potato_wire", participants)).toEqual([13]);
+  });
+
+  it("skips the current bot self mention", () => {
+    expect(resolveAniMentionsFromText("@Alice ask @PotatoWire", participants, { selfEntityId: 12 })).toEqual([13]);
+  });
+
+  it("deduplicates repeated mentions in text", () => {
+    expect(resolveAniMentionsFromText("@PotatoWire then @PotatoWire again", participants)).toEqual([13]);
+  });
+});
+
+describe("runWithAniOutboundActivity", () => {
+  it("marks successful non-status ANI sends in the active conversation", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ data: { id: 123 } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const { didSend } = await runWithAniOutboundActivity(42, async () => {
+        await sendAniMessage({
+          serverUrl: "https://agent-native.im",
+          apiKey: "aim_test",
+          conversationId: 42,
+          text: "sent by tool",
+        });
+      });
+      expect(didSend).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not count status-only progress sends as user-visible output", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ data: { id: 123 } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const { didSend } = await runWithAniOutboundActivity(42, async () => {
+        await sendAniMessage({
+          serverUrl: "https://agent-native.im",
+          apiKey: "aim_test",
+          conversationId: 42,
+          text: "",
+          statusLayer: { phase: "typing", progress: 0, text: "" },
+        });
+      });
+      expect(didSend).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
