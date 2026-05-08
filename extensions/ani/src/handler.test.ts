@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { parseArtifacts, isTextFile } from "./monitor/handler.js";
+import { parseArtifacts, isTextFile, shouldSendEmptyResponseFallback } from "./monitor/handler.js";
 import { resolveAniMentionsFromText, runWithAniOutboundActivity, sendAniMessage } from "./monitor/send.js";
 
 describe("parseArtifacts", () => {
@@ -233,5 +233,44 @@ describe("runWithAniOutboundActivity", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("shouldSendEmptyResponseFallback", () => {
+  it("does not send fallback when visible replies are intentionally suppressed by policy", () => {
+    expect(
+      shouldSendEmptyResponseFallback({
+        didSendReply: false,
+        queuedFinal: false,
+        counts: { tool: 0, block: 0, final: 0 },
+      }),
+    ).toBe(false);
+  });
+
+  it("does not send fallback after a visible reply has already been queued or sent", () => {
+    expect(
+      shouldSendEmptyResponseFallback({
+        didSendReply: true,
+        queuedFinal: false,
+        counts: { tool: 0, block: 1, final: 0 },
+      }),
+    ).toBe(false);
+    expect(
+      shouldSendEmptyResponseFallback({
+        didSendReply: false,
+        queuedFinal: true,
+        counts: { tool: 0, block: 0, final: 1 },
+      }),
+    ).toBe(false);
+  });
+
+  it("sends fallback when OpenClaw attempted visible delivery but ANI sent nothing", () => {
+    expect(
+      shouldSendEmptyResponseFallback({
+        didSendReply: false,
+        queuedFinal: false,
+        counts: { tool: 0, block: 1, final: 0 },
+      }),
+    ).toBe(true);
   });
 });

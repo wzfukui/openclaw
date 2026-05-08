@@ -105,6 +105,18 @@ Rules:
 - Do NOT nest artifact tags.
 `.trim();
 
+export function shouldSendEmptyResponseFallback(params: {
+  didSendReply: boolean;
+  queuedFinal: boolean;
+  counts?: Record<string, number>;
+}): boolean {
+  if (params.didSendReply || params.queuedFinal) return false;
+
+  const counts = params.counts ?? {};
+  const attemptedVisibleDelivery = Object.values(counts).some((count) => count > 0);
+  return attemptedVisibleDelivery;
+}
+
 /**
  * Parse <artifact> tags from model reply text.
  * Returns an array of { before, artifact, after } segments.
@@ -856,7 +868,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
           },
         });
       });
-      const { queuedFinal } = dispatchResult;
+      const { queuedFinal, counts } = dispatchResult;
       markDispatchIdle();
 
       if (queuedFinal || didSendToolOutbound) didSendReply = true;
@@ -870,7 +882,7 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`);
       }
 
-      if (!didSendReply && !queuedFinal) {
+      if (shouldSendEmptyResponseFallback({ didSendReply, queuedFinal, counts })) {
         await sendAniMessage({
           serverUrl, apiKey, conversationId,
           text: "No response generated. Please try again.",
