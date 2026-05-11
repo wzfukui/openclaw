@@ -1,17 +1,13 @@
-import {
-  createReplyPrefixContext,
-  createTypingCallbacks,
-  type RuntimeEnv,
-} from "../sdk-compat.js";
-
 import { randomBytes } from "node:crypto";
-
+import { createReplyPrefixContext, createTypingCallbacks, type RuntimeEnv } from "../sdk-compat.js";
 import type { CoreConfig } from "../types.js";
+import { createInboundDebouncer } from "./debounce.js";
 import {
   sendAniMessage,
   sendAniProgress,
   fetchConversation,
   fetchConversationMemories,
+  resolveAniMentionPublicIdsFromText,
   resolveAniMentionsFromText,
   runWithAniOutboundActivity,
   toggleAniReaction,
@@ -19,7 +15,6 @@ import {
   type AniConversation,
   type AniMemory,
 } from "./send.js";
-import { createInboundDebouncer } from "./debounce.js";
 
 export type AniWsMessage = {
   type?: string;
@@ -126,7 +121,8 @@ export function parseArtifacts(text: string): Array<{
   artifact?: AniArtifact;
   raw?: string;
 }> {
-  const TAG_RE = /<artifact\s+type="(?<type>[^"]+)"(?:\s+title="(?<title>[^"]*)")?(?:\s+language="(?<lang>[^"]*)")?\s*>\n?(?<source>[\s\S]*?)\n?<\/artifact>/g;
+  const TAG_RE =
+    /<artifact\s+type="(?<type>[^"]+)"(?:\s+title="(?<title>[^"]*)")?(?:\s+language="(?<lang>[^"]*)")?\s*>\n?(?<source>[\s\S]*?)\n?<\/artifact>/g;
 
   const segments: Array<{ textBefore: string; artifact?: AniArtifact; raw?: string }> = [];
   let lastIndex = 0;
@@ -135,9 +131,13 @@ export function parseArtifacts(text: string): Array<{
     const before = text.slice(lastIndex, match.index);
     const artType = match.groups?.type ?? "html";
     const mappedType: AniArtifact["artifact_type"] =
-      artType === "mermaid" ? "mermaid" :
-      artType === "code" ? "code" :
-      artType === "image" ? "image" : "html";
+      artType === "mermaid"
+        ? "mermaid"
+        : artType === "code"
+          ? "code"
+          : artType === "image"
+            ? "image"
+            : "html";
 
     segments.push({
       textBefore: before,
@@ -165,21 +165,41 @@ export function parseArtifacts(text: string): Array<{
 // Attachment processing: download text files inline, describe others
 // ---------------------------------------------------------------------------
 
-const TEXT_MIME_PREFIXES = ['text/', 'application/json', 'application/xml', 'application/yaml'];
-const TEXT_EXTENSIONS = ['.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml', '.log', '.toml', '.ini', '.cfg', '.conf', '.sh', '.py', '.js', '.ts', '.go', '.rs', '.sql'];
+const TEXT_MIME_PREFIXES = ["text/", "application/json", "application/xml", "application/yaml"];
+const TEXT_EXTENSIONS = [
+  ".txt",
+  ".md",
+  ".csv",
+  ".json",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".log",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".sh",
+  ".py",
+  ".js",
+  ".ts",
+  ".go",
+  ".rs",
+  ".sql",
+];
 const MAX_TEXT_FILE_SIZE = 102400; // 100KB
 
 export function isTextFile(mimeType?: string, filename?: string): boolean {
-  if (mimeType && TEXT_MIME_PREFIXES.some(p => mimeType.startsWith(p))) return true;
+  if (mimeType && TEXT_MIME_PREFIXES.some((p) => mimeType.startsWith(p))) return true;
   if (filename) {
-    const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+    const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
     return TEXT_EXTENSIONS.includes(ext);
   }
   return false;
 }
 
 function formatFileSize(bytes?: number): string {
-  if (bytes == null) return 'unknown size';
+  if (bytes == null) return "unknown size";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1048576).toFixed(1)} MB`;
@@ -201,11 +221,15 @@ function classifyMime(mimeType?: string): { category: string; label: string } {
     return { category: "video", label: `${fmt} video` };
   }
   if (mimeType === "application/pdf") return { category: "document", label: "PDF document" };
-  if (mimeType.includes("word") || mimeType.includes("document")) return { category: "document", label: "Word document" };
-  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return { category: "document", label: "Excel spreadsheet" };
-  if (mimeType.includes("powerpoint") || mimeType.includes("presentation")) return { category: "document", label: "PowerPoint presentation" };
+  if (mimeType.includes("word") || mimeType.includes("document"))
+    return { category: "document", label: "Word document" };
+  if (mimeType.includes("excel") || mimeType.includes("spreadsheet"))
+    return { category: "document", label: "Excel spreadsheet" };
+  if (mimeType.includes("powerpoint") || mimeType.includes("presentation"))
+    return { category: "document", label: "PowerPoint presentation" };
   if (mimeType === "application/zip") return { category: "archive", label: "ZIP archive" };
-  if (mimeType.includes("tar") || mimeType.includes("gzip")) return { category: "archive", label: "compressed archive" };
+  if (mimeType.includes("tar") || mimeType.includes("gzip"))
+    return { category: "archive", label: "compressed archive" };
   return { category: "file", label: mimeType };
 }
 
@@ -220,7 +244,9 @@ function formatAttachmentDescription(
   const { category, label } = classifyMime(mimeType);
   const sizeStr = formatFileSize(size);
   const durationStr = duration ? `, ${duration}s` : "";
-  const accessStr = requiresAuthAccess ? " — available via authenticated ANI attachment access" : "";
+  const accessStr = requiresAuthAccess
+    ? " — available via authenticated ANI attachment access"
+    : "";
 
   switch (category) {
     case "image":
@@ -239,23 +265,25 @@ function formatAttachmentDescription(
 }
 
 async function processAttachments(
-  attachments: NonNullable<NonNullable<AniWsMessage['data']>['attachments']>,
+  attachments: NonNullable<NonNullable<AniWsMessage["data"]>["attachments"]>,
   serverUrl: string,
   apiKey: string,
 ): Promise<string> {
   const parts: string[] = [];
 
   for (const att of attachments) {
-    const filename = att.filename || 'unknown';
+    const filename = att.filename || "unknown";
     const url = att.url;
 
     if (!url) {
-      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, false, att.duration));
+      parts.push(
+        formatAttachmentDescription(filename, att.mime_type, att.size, false, att.duration),
+      );
       continue;
     }
 
     // Build full URL (ANI uses relative paths like /files/...)
-    const fullUrl = url.startsWith('http') ? url : `${serverUrl}${url}`;
+    const fullUrl = url.startsWith("http") ? url : `${serverUrl}${url}`;
 
     // For text files small enough, download and inline the content
     if (isTextFile(att.mime_type, att.filename) && (att.size ?? 0) <= MAX_TEXT_FILE_SIZE) {
@@ -268,29 +296,51 @@ async function processAttachments(
           // Validate actual response size before reading body to prevent DoS
           const contentLength = Number(res.headers.get("content-length") ?? "0");
           if (contentLength > MAX_TEXT_FILE_SIZE) {
-            parts.push(formatAttachmentDescription(filename, att.mime_type, contentLength, true, att.duration));
+            parts.push(
+              formatAttachmentDescription(
+                filename,
+                att.mime_type,
+                contentLength,
+                true,
+                att.duration,
+              ),
+            );
           } else {
             const content = await res.text();
             if (content.length > MAX_TEXT_FILE_SIZE) {
               // Actual body exceeded limit despite header; fall back to description
-              parts.push(formatAttachmentDescription(filename, att.mime_type, content.length, true, att.duration));
+              parts.push(
+                formatAttachmentDescription(
+                  filename,
+                  att.mime_type,
+                  content.length,
+                  true,
+                  att.duration,
+                ),
+              );
             } else {
               parts.push(`--- Attached file: ${filename} ---\n${content}\n--- End of file ---`);
             }
           }
         } else {
-          parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration));
+          parts.push(
+            formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration),
+          );
         }
       } catch {
-        parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration));
+        parts.push(
+          formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration),
+        );
       }
     } else {
       // Non-text or large files: describe them, but do not leak protected download URLs
-      parts.push(formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration));
+      parts.push(
+        formatAttachmentDescription(filename, att.mime_type, att.size, true, att.duration),
+      );
     }
   }
 
-  return parts.join('\n\n');
+  return parts.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -305,10 +355,16 @@ type SavedAttachment = { path: string; contentType?: string };
  * which requires local file paths via MediaPath/MediaPaths context fields.
  */
 async function downloadAndSaveAttachments(
-  attachments: NonNullable<NonNullable<AniWsMessage['data']>['attachments']>,
+  attachments: NonNullable<NonNullable<AniWsMessage["data"]>["attachments"]>,
   serverUrl: string,
   apiKey: string,
-  saveFn: (buffer: Buffer, contentType?: string, subdir?: string, maxBytes?: number, originalFilename?: string) => Promise<{ path: string; contentType?: string }>,
+  saveFn: (
+    buffer: Buffer,
+    contentType?: string,
+    subdir?: string,
+    maxBytes?: number,
+    originalFilename?: string,
+  ) => Promise<{ path: string; contentType?: string }>,
   logVerbose: (msg: string) => void,
 ): Promise<SavedAttachment[]> {
   const saved: SavedAttachment[] = [];
@@ -317,7 +373,7 @@ async function downloadAndSaveAttachments(
     const url = att.url;
     if (!url) continue;
 
-    const fullUrl = url.startsWith('http') ? url : `${serverUrl}${url}`;
+    const fullUrl = url.startsWith("http") ? url : `${serverUrl}${url}`;
     try {
       const res = await fetch(fullUrl, {
         headers: { Authorization: `Bearer ${apiKey}` },
@@ -340,7 +396,9 @@ async function downloadAndSaveAttachments(
       );
 
       saved.push({ path: result.path, contentType: result.contentType });
-      logVerbose(`ani: saved media ${att.filename ?? "file"} → ${result.path} (${result.contentType})`);
+      logVerbose(
+        `ani: saved media ${att.filename ?? "file"} → ${result.path} (${result.contentType})`,
+      );
     } catch (err) {
       logVerbose(`ani: media save failed for ${att.filename ?? url}: ${String(err)}`);
     }
@@ -453,7 +511,10 @@ export function createAniMessageHandler(params: AniHandlerParams) {
   const activeStreams = new Map<string, { controller: AbortController; conversationId: number }>();
 
   // Cache conversation metadata (refreshed every 5 minutes)
-  const convCache = new Map<number, { conv: AniConversation; memories: AniMemory[]; fetchedAt: number }>();
+  const convCache = new Map<
+    number,
+    { conv: AniConversation; memories: AniMemory[]; fetchedAt: number }
+  >();
   const CACHE_TTL = 5 * 60 * 1000;
   const CACHE_MAX_SIZE = 100;
 
@@ -511,42 +572,52 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       parts.push(`## Conversation Description\n\n${conv.description.trim()}`);
     }
 
-    // Participants (with entity_id for cross-bot mention/collaboration)
+    // Participants for cross-bot mention/collaboration.
+    // Public IDs are stable API identifiers; internal entity IDs stay out of
+    // model-facing prompts so agents do not learn database autoincrement IDs.
     if (conv?.participants && conv.participants.length > 0) {
       const memberLines = conv.participants.map((p) => {
-        const name = p.entity?.display_name ?? `entity-${p.entity_id}`;
+        const name = p.entity?.display_name ?? p.entity?.name ?? p.entity?.public_id ?? "unknown";
         const type = p.entity?.entity_type ?? "unknown";
         const role = p.role ?? "member";
-        return `- ${name} (${type}, ${role}, id=${p.entity_id})`;
+        const publicId = p.entity?.public_id ? `, public_id=${p.entity.public_id}` : "";
+        const botId = p.entity?.bot_id ? `, bot_id=${p.entity.bot_id}` : "";
+        return `- ${name} (${type}, ${role}${publicId}${botId})`;
       });
       parts.push(`## Participants\n\n${memberLines.join("\n")}`);
     }
 
     // Multi-bot group behavior: teach the agent when to stay silent
-    if (conv?.participants && conv.participants.filter((p) => p.entity?.entity_type === "bot").length > 1) {
-      parts.push([
-        "## Group Behavior",
-        "",
-        "This is a multi-bot group. Follow these rules strictly:",
-        "",
-        "**When to respond:**",
-        "- A human @mentions you by name with a direct task for you → respond.",
-        "- Another bot @mentions you (task handoff) → respond.",
-        "",
-        "**When to stay silent (reply with exactly [SILENT]):**",
-        "- The message @mentions another bot but NOT you → [SILENT].",
-        "- Another bot posted a message and did NOT @mention you → [SILENT].",
-        "- The message assigns tasks to multiple bots sequentially (e.g. 'Bot_A do X, then Bot_B do Y') and your task depends on another bot finishing first → [SILENT]. Wait for that bot to @mention you with results.",
-        "",
-        "**How to @mention (IMPORTANT — avoid loops):**",
-        "- ONLY use @TheirName when you need them to take action (task handoff).",
-        "- If you are just replying, confirming, or acknowledging — write their name WITHOUT the @ prefix.",
-        "  Example: '胖胖虾 的结果已收到，任务完成。' (no @, no notification)",
-        "  Example: '@小龙虾 请处理这个数据' (with @, triggers notification)",
-        "- NEVER @mention a bot just to say 'received' or 'done' — this causes infinite reply loops.",
-        "",
-        "[SILENT] means you choose not to speak. The system will suppress the message entirely.",
-      ].join("\n"));
+    if (
+      conv?.participants &&
+      conv.participants.filter((p) => p.entity?.entity_type === "bot").length > 1
+    ) {
+      parts.push(
+        [
+          "## Group Behavior",
+          "",
+          "This is a multi-bot group. Follow these rules strictly:",
+          "",
+          "**When to respond:**",
+          "- A human @mentions you by name with a direct task for you → respond.",
+          "- Another bot @mentions you (task handoff) → respond.",
+          "",
+          "**When to stay silent (reply with exactly [SILENT]):**",
+          "- The message @mentions another bot but NOT you → [SILENT].",
+          "- Another bot posted a message and did NOT @mention you → [SILENT].",
+          "- The message assigns tasks to multiple bots sequentially (e.g. 'Bot_A do X, then Bot_B do Y') and your task depends on another bot finishing first → [SILENT]. Wait for that bot to @mention you with results.",
+          "",
+          "**How to @mention (IMPORTANT — avoid loops):**",
+          "- ONLY use @TheirName when you need them to take action (task handoff).",
+          "- Use the visible participant name after @. The ANI plugin will attach structured mention_public_ids automatically when the target is unambiguous.",
+          "- If you are just replying, confirming, or acknowledging — write their name WITHOUT the @ prefix.",
+          "  Example: '胖胖虾 的结果已收到，任务完成。' (no @, no notification)",
+          "  Example: '@小龙虾 请处理这个数据' (with @, triggers notification)",
+          "- NEVER @mention a bot just to say 'received' or 'done' — this causes infinite reply loops.",
+          "",
+          "[SILENT] means you choose not to speak. The system will suppress the message entirely.",
+        ].join("\n"),
+      );
     }
 
     // Memories
@@ -559,17 +630,19 @@ export function createAniMessageHandler(params: AniHandlerParams) {
     parts.push(ANI_ARTIFACT_SYSTEM_PROMPT);
 
     // Tool awareness: tell the agent about available ANI tools
-    parts.push([
-      "## Available Tools",
-      "",
-      "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context — especially messages you were not @mentioned in. Default 5 messages, max 50.",
-      "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
-      "- **ani_list_conversation_tasks**: List the current roadmap/tasks for this conversation, optionally filtered by status.",
-      "- **ani_get_task**: Fetch the details of a single task by task ID.",
-      "- **ani_create_task**: Create a new conversation task when the user asks you to add work items.",
-      "- **ani_update_task**: Update task status, assignee, priority, title, description, due date, or sort order.",
-      "- **ani_delete_task**: Delete a task when explicitly requested and allowed by ANI permissions.",
-    ].join("\n"));
+    parts.push(
+      [
+        "## Available Tools",
+        "",
+        "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context — especially messages you were not @mentioned in. Default 5 messages, max 50.",
+        "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
+        "- **ani_list_conversation_tasks**: List the current roadmap/tasks for this conversation, optionally filtered by status.",
+        "- **ani_get_task**: Fetch the details of a single task by task ID.",
+        "- **ani_create_task**: Create a new conversation task when the user asks you to add work items.",
+        "- **ani_update_task**: Update task status, assignee, priority, title, description, due date, or sort order.",
+        "- **ani_delete_task**: Delete a task when explicitly requested and allowed by ANI permissions.",
+      ].join("\n"),
+    );
 
     return parts.join("\n\n");
   }
@@ -601,17 +674,19 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
     parts.push(ANI_ARTIFACT_SYSTEM_PROMPT);
 
-    parts.push([
-      "## Available Tools",
-      "",
-      "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context you don't have. Default 5 messages, max 50.",
-      "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
-      "- **ani_list_conversation_tasks**: List the current roadmap/tasks for this conversation, optionally filtered by status.",
-      "- **ani_get_task**: Fetch the details of a single task by task ID.",
-      "- **ani_create_task**: Create a new conversation task when the user asks you to add work items.",
-      "- **ani_update_task**: Update task status, assignee, priority, title, description, due date, or sort order.",
-      "- **ani_delete_task**: Delete a task when explicitly requested and allowed by ANI permissions.",
-    ].join("\n"));
+    parts.push(
+      [
+        "## Available Tools",
+        "",
+        "- **ani_fetch_chat_history_messages**: Retrieve full conversation history from the ANI platform. Use when users reference earlier messages, files, or context you don't have. Default 5 messages, max 50.",
+        "- **ani_send_file**: Create and send a file to this conversation (text content or disk file).",
+        "- **ani_list_conversation_tasks**: List the current roadmap/tasks for this conversation, optionally filtered by status.",
+        "- **ani_get_task**: Fetch the details of a single task by task ID.",
+        "- **ani_create_task**: Create a new conversation task when the user asks you to add work items.",
+        "- **ani_update_task**: Update task status, assignee, priority, title, description, due date, or sort order.",
+        "- **ani_delete_task**: Delete a task when explicitly requested and allowed by ANI permissions.",
+      ].join("\n"),
+    );
 
     return parts.join("\n\n");
   }
@@ -652,253 +727,303 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       enqueueOrRun(conversationId, async () => {
         let streamId: string | undefined;
         try {
-      // Fetch conversation context (cached, refreshed every 5 min)
-      const { conv: convContext, memories } = await getConversationContext(conversationId);
-      const conversationTitle = convContext?.title ?? msg.conversation?.title ?? `conv-${conversationId}`;
+          // Fetch conversation context (cached, refreshed every 5 min)
+          const { conv: convContext, memories } = await getConversationContext(conversationId);
+          const conversationTitle =
+            convContext?.title ?? msg.conversation?.title ?? `conv-${conversationId}`;
 
-      const convType = convContext?.conv_type ?? msg.conversation?.conv_type ?? "group";
-      const isDirect = convType === "direct";
+          const convType = convContext?.conv_type ?? msg.conversation?.conv_type ?? "group";
+          const isDirect = convType === "direct";
 
-      const groupSystemPrompt = isDirect
-        ? buildDirectSystemPrompt(convContext, memories, conversationId)
-        : buildConversationSystemPrompt(convContext, memories, conversationId);
+          const groupSystemPrompt = isDirect
+            ? buildDirectSystemPrompt(convContext, memories, conversationId)
+            : buildConversationSystemPrompt(convContext, memories, conversationId);
 
-      logger.info(
-        `ani: inbound conv=${conversationId} type=${convType} from=${senderName}(${senderId}) attachments=${attachments.length} hasText=${Boolean(text.trim())} msgIds=${messageIds.length}`,
-      );
-
-      // Route through OpenClaw agent pipeline
-      const peerKind = isDirect ? "dm" : "channel";
-      const route = core.channel.routing.resolveAgentRoute({
-        cfg,
-        channel: "ani",
-        peer: {
-          kind: peerKind,
-          id: String(conversationId),
-        },
-      });
-
-      const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
-        agentId: route.agentId,
-      });
-
-      const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
-      const previousTimestamp = core.channel.session.readSessionUpdatedAt({
-        storePath,
-        sessionKey: route.sessionKey,
-      });
-
-      const rawBody = attachmentText ? `${text}\n\n${attachmentText}` : text;
-      logVerbose(`ani: rawBody for envelope (${rawBody.length} chars): ${rawBody.slice(0, 500)}`);
-
-      const body = core.channel.reply.formatAgentEnvelope({
-        channel: "ANI",
-        from: senderName,
-        timestamp: msg.created_at ? new Date(msg.created_at).getTime() : undefined,
-        previousTimestamp,
-        envelope: envelopeOptions,
-        body: rawBody,
-      });
-      logVerbose(`ani: formatted body (${body.length} chars): ${body.slice(0, 500)}`);
-
-      const mediaPaths = savedMedia.map((m) => m.path);
-      const mediaTypes = savedMedia.map((m) => m.contentType ?? "application/octet-stream");
-
-      const chatType = isDirect ? "direct" as const : "channel" as const;
-      const ctxPayload = core.channel.reply.finalizeInboundContext({
-        Body: body,
-        BodyForAgent: rawBody,
-        RawBody: text,
-        CommandBody: text,
-        From: isDirect ? `ani:dm:${senderId}` : `ani:channel:${conversationId}`,
-        To: `ani:conv:${conversationId}`,
-        SessionKey: route.sessionKey,
-        AccountId: route.accountId,
-        ChatType: chatType,
-        ConversationLabel: senderName,
-        SenderName: senderName,
-        SenderId: String(senderId),
-        ...(mediaPaths.length > 0 ? {
-          MediaPath: mediaPaths[0],
-          MediaPaths: mediaPaths,
-          MediaType: mediaTypes[0],
-          MediaTypes: mediaTypes,
-        } : {}),
-        ...(isDirect
-          ? {}
-          : {
-              GroupSubject: conversationTitle,
-              GroupChannel: String(conversationId),
-            }),
-        GroupSystemPrompt: groupSystemPrompt,
-        Provider: "ani" as const,
-        Surface: "ani" as const,
-        MessageSid: messageId,
-        Timestamp: msg.created_at ? new Date(msg.created_at).getTime() : undefined,
-        CommandAuthorized: true,
-        CommandSource: "text" as const,
-        OriginatingChannel: "ani" as const,
-        OriginatingTo: `ani:conv:${conversationId}`,
-      });
-
-      await core.channel.session.recordInboundSession({
-        storePath,
-        sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
-        ctx: ctxPayload,
-        onRecordError: (err) => {
-          logger.warn(
-            { error: String(err), storePath, sessionKey: ctxPayload.SessionKey ?? route.sessionKey },
-            "failed updating session meta",
+          logger.info(
+            `ani: inbound conv=${conversationId} type=${convType} from=${senderName}(${senderId}) attachments=${attachments.length} hasText=${Boolean(text.trim())} msgIds=${messageIds.length}`,
           );
-        },
-      });
 
-      const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "ani");
-      const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
+          // Route through OpenClaw agent pipeline
+          const peerKind = isDirect ? "dm" : "channel";
+          const route = core.channel.routing.resolveAgentRoute({
+            cfg,
+            channel: "ani",
+            peer: {
+              kind: peerKind,
+              id: String(conversationId),
+            },
+          });
 
-      const typingCallbacks = createTypingCallbacks({
-        start: () => Promise.resolve(),
-        stop: () => Promise.resolve(),
-        onStartError: () => {},
-        onStopError: () => {},
-      });
+          const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
+            agentId: route.agentId,
+          });
 
-      let didSendReply = false;
+          const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);
+          const previousTimestamp = core.channel.session.readSessionUpdatedAt({
+            storePath,
+            sessionKey: route.sessionKey,
+          });
 
-      function extractMentionsFromText(text: string): number[] {
-        return resolveAniMentionsFromText(text, convContext?.participants, { selfEntityId });
-      }
+          const rawBody = attachmentText ? `${text}\n\n${attachmentText}` : text;
+          logVerbose(
+            `ani: rawBody for envelope (${rawBody.length} chars): ${rawBody.slice(0, 500)}`,
+          );
 
-      streamId = generateStreamId();
-      const replyBuffer: string[] = [];
-      let totalChars = 0;
+          const body = core.channel.reply.formatAgentEnvelope({
+            channel: "ANI",
+            from: senderName,
+            timestamp: msg.created_at ? new Date(msg.created_at).getTime() : undefined,
+            previousTimestamp,
+            envelope: envelopeOptions,
+            body: rawBody,
+          });
+          logVerbose(`ani: formatted body (${body.length} chars): ${body.slice(0, 500)}`);
 
-      for (const mid of messageIds) {
-        if (mid) messageToStreamMap.set(mid, streamId);
-      }
+          const mediaPaths = savedMedia.map((m) => m.path);
+          const mediaTypes = savedMedia.map((m) => m.contentType ?? "application/octet-stream");
 
-      const streamAbortController = new AbortController();
-      activeStreams.set(streamId, { controller: streamAbortController, conversationId });
+          const chatType = isDirect ? ("direct" as const) : ("channel" as const);
+          const ctxPayload = core.channel.reply.finalizeInboundContext({
+            Body: body,
+            BodyForAgent: rawBody,
+            RawBody: text,
+            CommandBody: text,
+            From: isDirect ? `ani:dm:${senderId}` : `ani:channel:${conversationId}`,
+            To: `ani:conv:${conversationId}`,
+            SessionKey: route.sessionKey,
+            AccountId: route.accountId,
+            ChatType: chatType,
+            ConversationLabel: senderName,
+            SenderName: senderName,
+            SenderId: String(senderId),
+            ...(mediaPaths.length > 0
+              ? {
+                  MediaPath: mediaPaths[0],
+                  MediaPaths: mediaPaths,
+                  MediaType: mediaTypes[0],
+                  MediaTypes: mediaTypes,
+                }
+              : {}),
+            ...(isDirect
+              ? {}
+              : {
+                  GroupSubject: conversationTitle,
+                  GroupChannel: String(conversationId),
+                }),
+            GroupSystemPrompt: groupSystemPrompt,
+            Provider: "ani" as const,
+            Surface: "ani" as const,
+            MessageSid: messageId,
+            Timestamp: msg.created_at ? new Date(msg.created_at).getTime() : undefined,
+            CommandAuthorized: true,
+            CommandSource: "text" as const,
+            OriginatingChannel: "ani" as const,
+            OriginatingTo: `ani:conv:${conversationId}`,
+          });
 
-      const { dispatcher, replyOptions, markDispatchIdle } =
-        core.channel.reply.createReplyDispatcherWithTyping({
-          responsePrefix: prefixContext.responsePrefix,
-          responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
-          humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
-          deliver: async (payload, info) => {
-            if (messageIds.some((mid) => mid && revokedMessages.has(mid))) {
-              logVerbose(`ani: skipping reply block — trigger message was revoked`);
-              return;
-            }
+          await core.channel.session.recordInboundSession({
+            storePath,
+            sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
+            ctx: ctxPayload,
+            onRecordError: (err) => {
+              logger.warn(
+                {
+                  error: String(err),
+                  storePath,
+                  sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
+                },
+                "failed updating session meta",
+              );
+            },
+          });
 
-            if (streamAbortController.signal.aborted) {
-              logVerbose(`ani: skipping reply block — stream ${streamId} was cancelled`);
-              return;
-            }
+          const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "ani");
+          const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
 
-            const replyText = payload.text ?? "";
-            if (!replyText.trim()) return;
+          const typingCallbacks = createTypingCallbacks({
+            start: () => Promise.resolve(),
+            stop: () => Promise.resolve(),
+            onStartError: () => {},
+            onStopError: () => {},
+          });
 
-            replyBuffer.push(replyText);
-            totalChars += replyText.length;
+          let didSendReply = false;
 
-            if (replyText.trim() === "[SILENT]" || replyText.trim().startsWith("[SILENT]")) {
-              logVerbose(`ani: agent chose [SILENT], suppressing block`);
-              return;
-            }
+          function extractMentionPublicIdsFromText(text: string): string[] {
+            const selfPublicId = convContext?.participants?.find(
+              (p) => (p.entity_id ?? p.entity?.id) === selfEntityId,
+            )?.entity?.public_id;
+            return resolveAniMentionPublicIdsFromText(text, convContext?.participants, {
+              selfPublicId,
+            });
+          }
 
-            const autoMentions = extractMentionsFromText(replyText);
-            const segments = parseArtifacts(replyText);
-            const hasArtifacts = segments.some((s) => s.artifact);
+          function extractMentionsFromText(text: string): number[] {
+            return resolveAniMentionsFromText(text, convContext?.participants, { selfEntityId });
+          }
 
-            if (hasArtifacts) {
-              for (const seg of segments) {
-                try {
-                  const plainText = seg.textBefore.trim();
-                  if (plainText) {
-                    const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
-                    for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
-                      const trimmed = chunk.trim();
-                      if (!trimmed) continue;
-                      await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
+          streamId = generateStreamId();
+          const replyBuffer: string[] = [];
+          let totalChars = 0;
+
+          for (const mid of messageIds) {
+            if (mid) messageToStreamMap.set(mid, streamId);
+          }
+
+          const streamAbortController = new AbortController();
+          activeStreams.set(streamId, { controller: streamAbortController, conversationId });
+
+          const { dispatcher, replyOptions, markDispatchIdle } =
+            core.channel.reply.createReplyDispatcherWithTyping({
+              responsePrefix: prefixContext.responsePrefix,
+              responsePrefixContextProvider: prefixContext.responsePrefixContextProvider,
+              humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
+              deliver: async (payload, info) => {
+                if (messageIds.some((mid) => mid && revokedMessages.has(mid))) {
+                  logVerbose(`ani: skipping reply block — trigger message was revoked`);
+                  return;
+                }
+
+                if (streamAbortController.signal.aborted) {
+                  logVerbose(`ani: skipping reply block — stream ${streamId} was cancelled`);
+                  return;
+                }
+
+                const replyText = payload.text ?? "";
+                if (!replyText.trim()) return;
+
+                replyBuffer.push(replyText);
+                totalChars += replyText.length;
+
+                if (replyText.trim() === "[SILENT]" || replyText.trim().startsWith("[SILENT]")) {
+                  logVerbose(`ani: agent chose [SILENT], suppressing block`);
+                  return;
+                }
+
+                const autoMentionPublicIds = extractMentionPublicIdsFromText(replyText);
+                const autoMentions =
+                  autoMentionPublicIds.length > 0 ? undefined : extractMentionsFromText(replyText);
+                const segments = parseArtifacts(replyText);
+                const hasArtifacts = segments.some((s) => s.artifact);
+
+                if (hasArtifacts) {
+                  for (const seg of segments) {
+                    try {
+                      const plainText = seg.textBefore.trim();
+                      if (plainText) {
+                        const chunks = core.channel.text.chunkMarkdownText(plainText, textLimit);
+                        for (const chunk of chunks.length > 0 ? chunks : [plainText]) {
+                          const trimmed = chunk.trim();
+                          if (!trimmed) continue;
+                          await sendAniMessage({
+                            serverUrl,
+                            apiKey,
+                            conversationId,
+                            text: trimmed,
+                            streamId,
+                            mentionPublicIds: autoMentionPublicIds,
+                            mentions: autoMentions,
+                          });
+                        }
+                      }
+                      if (seg.artifact) {
+                        await sendAniMessage({
+                          serverUrl,
+                          apiKey,
+                          conversationId,
+                          text: seg.artifact.title ?? "Artifact",
+                          artifact: seg.artifact,
+                          streamId,
+                          mentionPublicIds: autoMentionPublicIds,
+                          mentions: autoMentions,
+                        });
+                      }
+                    } catch (segErr) {
+                      logger.warn(
+                        { error: String(segErr), conversationId },
+                        "ani: artifact segment send failed",
+                      );
                     }
                   }
-                  if (seg.artifact) {
+                } else {
+                  const chunks = core.channel.text.chunkMarkdownText(replyText, textLimit);
+                  for (const chunk of chunks.length > 0 ? chunks : [replyText]) {
+                    const trimmed = chunk.trim();
+                    if (!trimmed) continue;
                     await sendAniMessage({
-                      serverUrl, apiKey, conversationId,
-                      text: seg.artifact.title ?? "Artifact",
-                      artifact: seg.artifact, streamId, mentions: autoMentions,
+                      serverUrl,
+                      apiKey,
+                      conversationId,
+                      text: trimmed,
+                      streamId,
+                      mentionPublicIds: autoMentionPublicIds,
+                      mentions: autoMentions,
                     });
                   }
-                } catch (segErr) {
-                  logger.warn({ error: String(segErr), conversationId }, "ani: artifact segment send failed");
                 }
-              }
-            } else {
-              const chunks = core.channel.text.chunkMarkdownText(replyText, textLimit);
-              for (const chunk of chunks.length > 0 ? chunks : [replyText]) {
-                const trimmed = chunk.trim();
-                if (!trimmed) continue;
-                await sendAniMessage({ serverUrl, apiKey, conversationId, text: trimmed, streamId, mentions: autoMentions });
-              }
+                didSendReply = true;
+                logVerbose(
+                  `ani: sent block (${replyText.length} chars, kind=${info?.kind ?? "unknown"})`,
+                );
+              },
+              onSkip: (_payload, info) => {
+                if (info.reason !== "silent") {
+                  logVerbose(`ani: skipped reply block (reason=${info.reason})`);
+                }
+              },
+              onError: (err, info) => {
+                runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
+              },
+              onReplyStart: typingCallbacks.onReplyStart,
+              onIdle: typingCallbacks.onIdle,
+            });
+
+          const { result: dispatchResult, didSend: didSendToolOutbound } =
+            await runWithAniOutboundActivity(conversationId, async () => {
+              return core.channel.reply.dispatchReplyFromConfig({
+                ctx: ctxPayload,
+                cfg,
+                dispatcher,
+                replyOptions: {
+                  ...replyOptions,
+                  onModelSelected: prefixContext.onModelSelected,
+                },
+              });
+            });
+          const { queuedFinal, counts } = dispatchResult;
+          markDispatchIdle();
+
+          if (queuedFinal || didSendToolOutbound) didSendReply = true;
+
+          if (didSendReply) {
+            const preview = text.replace(/\s+/g, " ").slice(0, 160);
+            core.system.enqueueSystemEvent(`ANI message from ${senderName}: ${preview}`, {
+              sessionKey: route.sessionKey,
+              contextKey: `ani:message:${conversationId}:${messageId}`,
+            });
+            logVerbose(
+              `ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`,
+            );
+          }
+
+          if (shouldSendEmptyResponseFallback({ didSendReply, queuedFinal, counts })) {
+            await sendAniMessage({
+              serverUrl,
+              apiKey,
+              conversationId,
+              text: "No response generated. Please try again.",
+              streamId,
+            });
+          }
+
+          for (const mid of messageIds) {
+            if (mid) {
+              messageToStreamMap.delete(mid);
+              revokedMessages.delete(mid);
             }
-            didSendReply = true;
-            logVerbose(`ani: sent block (${replyText.length} chars, kind=${info?.kind ?? "unknown"})`);
-          },
-          onSkip: (_payload, info) => {
-            if (info.reason !== "silent") {
-              logVerbose(`ani: skipped reply block (reason=${info.reason})`);
-            }
-          },
-          onError: (err, info) => {
-            runtime.error?.(`ani ${info.kind} reply failed: ${String(err)}`);
-          },
-          onReplyStart: typingCallbacks.onReplyStart,
-          onIdle: typingCallbacks.onIdle,
-        });
-
-      const { result: dispatchResult, didSend: didSendToolOutbound } = await runWithAniOutboundActivity(conversationId, async () => {
-        return core.channel.reply.dispatchReplyFromConfig({
-          ctx: ctxPayload,
-          cfg,
-          dispatcher,
-          replyOptions: {
-            ...replyOptions,
-            onModelSelected: prefixContext.onModelSelected,
-          },
-        });
-      });
-      const { queuedFinal, counts } = dispatchResult;
-      markDispatchIdle();
-
-      if (queuedFinal || didSendToolOutbound) didSendReply = true;
-
-      if (didSendReply) {
-        const preview = text.replace(/\s+/g, " ").slice(0, 160);
-        core.system.enqueueSystemEvent(`ANI message from ${senderName}: ${preview}`, {
-          sessionKey: route.sessionKey,
-          contextKey: `ani:message:${conversationId}:${messageId}`,
-        });
-        logVerbose(`ani: delivered reply to conv=${conversationId} streamId=${streamId} chunks=${replyBuffer.length}`);
-      }
-
-      if (shouldSendEmptyResponseFallback({ didSendReply, queuedFinal, counts })) {
-        await sendAniMessage({
-          serverUrl, apiKey, conversationId,
-          text: "No response generated. Please try again.",
-          streamId,
-        });
-      }
-
-      for (const mid of messageIds) {
-        if (mid) {
-          messageToStreamMap.delete(mid);
-          revokedMessages.delete(mid);
-        }
-      }
-      activeStreams.delete(streamId);
-      resolve();
-
+          }
+          activeStreams.delete(streamId);
+          resolve();
         } catch (err) {
           if (streamId) {
             activeStreams.delete(streamId);
@@ -941,11 +1066,15 @@ export function createAniMessageHandler(params: AniHandlerParams) {
 
       // Handle task cancellation: abort the in-progress dispatch for the given stream
       if (wsMsg.type === "task.cancel" || wsMsg.type === "stream.cancel") {
-        const cancelStreamId = (wsMsg.data as Record<string, unknown> | undefined)?.stream_id as string | undefined;
+        const cancelStreamId = (wsMsg.data as Record<string, unknown> | undefined)?.stream_id as
+          | string
+          | undefined;
         if (cancelStreamId) {
           const entry = activeStreams.get(cancelStreamId);
           if (entry) {
-            logger.info(`ani: stream cancelled by user, streamId=${cancelStreamId} conv=${entry.conversationId}`);
+            logger.info(
+              `ani: stream cancelled by user, streamId=${cancelStreamId} conv=${entry.conversationId}`,
+            );
             entry.controller.abort();
             activeStreams.delete(cancelStreamId);
 
@@ -987,40 +1116,56 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       if (!conversationId) return;
 
       // Prefer data.body (full content) over summary (may be truncated by frontend)
-      const dataBody = typeof msg.layers?.data === "object" && msg.layers?.data !== null
-        ? (msg.layers.data as Record<string, unknown>).body
-        : undefined;
-      const text = (typeof dataBody === "string" ? dataBody : null) ?? msg.layers?.summary ?? msg.layers?.detail ?? "";
+      const dataBody =
+        typeof msg.layers?.data === "object" && msg.layers?.data !== null
+          ? (msg.layers.data as Record<string, unknown>).body
+          : undefined;
+      const text =
+        (typeof dataBody === "string" ? dataBody : null) ??
+        msg.layers?.summary ??
+        msg.layers?.detail ??
+        "";
 
       // Process attachments:
       // 1. Download and save to disk for OpenClaw media pipeline (MediaPath/MediaType)
       // 2. Also produce text descriptions for context (attachmentText)
       const attachments = msg.attachments ?? [];
-      logVerbose(`ani: attachments count=${attachments.length} raw=${JSON.stringify(attachments).slice(0, 500)}`);
-      let attachmentText = '';
+      logVerbose(
+        `ani: attachments count=${attachments.length} raw=${JSON.stringify(attachments).slice(0, 500)}`,
+      );
+      let attachmentText = "";
       let savedMedia: SavedAttachment[] = [];
       if (attachments.length > 0) {
         // Save files to disk for media-understanding pipeline (vision, audio, etc.)
-        savedMedia = await downloadAndSaveAttachments(attachments, serverUrl, apiKey, core.media.saveMediaBuffer, logVerbose);
+        savedMedia = await downloadAndSaveAttachments(
+          attachments,
+          serverUrl,
+          apiKey,
+          core.media.saveMediaBuffer,
+          logVerbose,
+        );
         // Also generate text descriptions as supplementary context
         attachmentText = await processAttachments(attachments, serverUrl, apiKey);
-        logVerbose(`ani: attachmentText (${attachmentText.length} chars) savedMedia=${savedMedia.length}: ${attachmentText.slice(0, 300)}`);
+        logVerbose(
+          `ani: attachmentText (${attachmentText.length} chars) savedMedia=${savedMedia.length}: ${attachmentText.slice(0, 300)}`,
+        );
       }
 
       if (!text.trim() && attachments.length === 0) return;
 
       const senderId = msg.sender_id ?? 0;
-      const senderName =
-        msg.sender?.display_name ?? `entity-${senderId}`;
+      const senderName = msg.sender?.display_name ?? `entity-${senderId}`;
       const senderType = msg.sender?.entity_type ?? msg.sender_type ?? "unknown";
       const messageId = String(msg.id ?? "");
 
       // Send ack-reaction if configured (confirms message receipt).
       const ackEmoji = cfg.messages?.ackReaction?.trim();
       if (ackEmoji && msg.id) {
-        toggleAniReaction({ serverUrl, apiKey, messageId: msg.id, emoji: ackEmoji }).catch((err) => {
-          logVerbose(`ani: ack-reaction failed for msg=${msg.id}: ${String(err)}`);
-        });
+        toggleAniReaction({ serverUrl, apiKey, messageId: msg.id, emoji: ackEmoji }).catch(
+          (err) => {
+            logVerbose(`ani: ack-reaction failed for msg=${msg.id}: ${String(err)}`);
+          },
+        );
       }
 
       // Debounce text-only messages from the same sender in the same conversation.
@@ -1029,7 +1174,9 @@ export function createAniMessageHandler(params: AniHandlerParams) {
       if (!hasAttachments && text.trim()) {
         const debounceKey = `${conversationId}:${senderId}`;
         debouncer.debounce(debounceKey, text, messageId, (combinedText, messageIds) => {
-          logVerbose(`ani: debounce fired for ${debounceKey}, ${messageIds.length} message(s) coalesced`);
+          logVerbose(
+            `ani: debounce fired for ${debounceKey}, ${messageIds.length} message(s) coalesced`,
+          );
           dispatchToAgent({
             combinedText,
             messageIds,
@@ -1061,7 +1208,6 @@ export function createAniMessageHandler(params: AniHandlerParams) {
         savedMedia,
         msg,
       });
-
     } catch (err) {
       runtime.error?.(`ani handler error: ${String(err)}`);
     }

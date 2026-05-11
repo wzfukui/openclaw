@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
-
 import { parseArtifacts, isTextFile, shouldSendEmptyResponseFallback } from "./monitor/handler.js";
-import { resolveAniMentionsFromText, runWithAniOutboundActivity, sendAniMessage } from "./monitor/send.js";
+import {
+  resolveAniMentionPublicIdsFromText,
+  resolveAniMentionsFromText,
+  runWithAniOutboundActivity,
+  sendAniMessage,
+} from "./monitor/send.js";
 
 describe("parseArtifacts", () => {
   it("returns a single text segment when no artifacts present", () => {
@@ -162,22 +166,37 @@ describe("resolveAniMentionsFromText", () => {
     {
       entity_id: 12,
       role: "member",
-      entity: { id: 12, display_name: "Alice", entity_type: "bot" },
+      entity: {
+        id: 12,
+        public_id: "alice-public",
+        display_name: "Alice",
+        bot_id: "alice",
+        entity_type: "bot",
+      },
     },
     {
       entity_id: 13,
       role: "member",
-      entity: { id: 13, display_name: "PotatoWire", name: "bot_potato_wire", entity_type: "bot" },
+      entity: {
+        id: 13,
+        public_id: "potato-public",
+        display_name: "PotatoWire",
+        name: "bot_potato_wire",
+        bot_id: "potato-wire",
+        entity_type: "bot",
+      },
     },
     {
       entity_id: 3,
       role: "owner",
-      entity: { id: 3, display_name: "Kui Fu", entity_type: "user" },
+      entity: { id: 3, public_id: "kui-public", display_name: "Kui Fu", entity_type: "user" },
     },
   ];
 
   it("maps visible ANI group mentions to participant entity ids", () => {
-    expect(resolveAniMentionsFromText("@PotatoWire please render this", participants)).toEqual([13]);
+    expect(resolveAniMentionsFromText("@PotatoWire please render this", participants)).toEqual([
+      13,
+    ]);
   });
 
   it("uses entity.name as a fallback mention alias", () => {
@@ -185,11 +204,75 @@ describe("resolveAniMentionsFromText", () => {
   });
 
   it("skips the current bot self mention", () => {
-    expect(resolveAniMentionsFromText("@Alice ask @PotatoWire", participants, { selfEntityId: 12 })).toEqual([13]);
+    expect(
+      resolveAniMentionsFromText("@Alice ask @PotatoWire", participants, { selfEntityId: 12 }),
+    ).toEqual([13]);
   });
 
   it("deduplicates repeated mentions in text", () => {
-    expect(resolveAniMentionsFromText("@PotatoWire then @PotatoWire again", participants)).toEqual([13]);
+    expect(resolveAniMentionsFromText("@PotatoWire then @PotatoWire again", participants)).toEqual([
+      13,
+    ]);
+  });
+});
+
+describe("resolveAniMentionPublicIdsFromText", () => {
+  const participants = [
+    {
+      entity_id: 12,
+      role: "member",
+      entity: {
+        id: 12,
+        public_id: "alice-public",
+        display_name: "Alice",
+        bot_id: "alice",
+        entity_type: "bot",
+      },
+    },
+    {
+      entity_id: 13,
+      role: "member",
+      entity: {
+        id: 13,
+        public_id: "potato-public",
+        display_name: "PotatoWire",
+        name: "bot_potato_wire",
+        bot_id: "potato-wire",
+        entity_type: "bot",
+      },
+    },
+  ];
+
+  it("maps visible group mentions to participant public IDs", () => {
+    expect(
+      resolveAniMentionPublicIdsFromText("@PotatoWire please scan this", participants),
+    ).toEqual(["potato-public"]);
+  });
+
+  it("uses bot_id and entity.name as fallback mention aliases", () => {
+    expect(resolveAniMentionPublicIdsFromText("handoff to @potato-wire", participants)).toEqual([
+      "potato-public",
+    ]);
+    expect(resolveAniMentionPublicIdsFromText("handoff to @bot_potato_wire", participants)).toEqual(
+      ["potato-public"],
+    );
+  });
+
+  it("skips the current bot self public ID", () => {
+    expect(
+      resolveAniMentionPublicIdsFromText("@Alice ask @PotatoWire", participants, {
+        selfPublicId: "alice-public",
+      }),
+    ).toEqual(["potato-public"]);
+  });
+
+  it("does not resolve ambiguous duplicate aliases", () => {
+    expect(
+      resolveAniMentionPublicIdsFromText("@Helper please check", [
+        { entity_id: 21, entity: { id: 21, public_id: "helper-a-public", display_name: "Helper" } },
+        { entity_id: 22, entity: { id: 22, public_id: "helper-b-public", display_name: "Helper" } },
+      ]),
+    ).toEqual([]);
   });
 });
 
@@ -230,6 +313,31 @@ describe("runWithAniOutboundActivity", () => {
         });
       });
       expect(didSend).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("sends structured public mention IDs in the ANI payload", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: unknown;
+    globalThis.fetch = (async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(JSON.stringify({ data: { id: 123 } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await sendAniMessage({
+        serverUrl: "https://agent-native.im",
+        apiKey: "aim_test",
+        conversationId: 42,
+        text: "@PotatoWire please scan this",
+        mentionPublicIds: ["potato-public"],
+      });
+      expect(requestBody).toMatchObject({
+        conversation_id: 42,
+        mention_public_ids: ["potato-public"],
+      });
+      expect(requestBody).not.toHaveProperty("mentions");
     } finally {
       globalThis.fetch = originalFetch;
     }

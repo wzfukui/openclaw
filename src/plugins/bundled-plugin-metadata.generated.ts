@@ -149,6 +149,106 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
     },
   },
   {
+    dirName: "ani",
+    idHint: "openclaw-ani",
+    source: {
+      source: "./index.ts",
+      built: "index.js",
+    },
+    packageName: "@wzfukui/openclaw-ani",
+    packageVersion: "2026.5.11",
+    packageDescription: "ANI Agent-Native IM channel plugin",
+    packageManifest: {
+      extensions: ["./index.ts"],
+      channel: {
+        id: "ani",
+        label: "Agent-Native IM",
+        selectionLabel: "Agent-Native IM (ANI)",
+        docsPath: "/channels/ani",
+        docsLabel: "ani",
+        blurb: "Agent-Native IM — messaging built for AI-first Bot collaboration.",
+        order: 80,
+        quickstartAllowFrom: false,
+      },
+      install: {
+        npmSpec: "@wzfukui/openclaw-ani",
+        localPath: "extensions/ani",
+        defaultChoice: "npm",
+      },
+    },
+    manifest: {
+      id: "ani",
+      configSchema: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          enabled: {
+            type: "boolean",
+          },
+          name: {
+            type: "string",
+          },
+          serverUrl: {
+            type: "string",
+          },
+          apiKey: {
+            type: "string",
+          },
+          entityId: {
+            type: "number",
+          },
+          dm: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              policy: {
+                type: "string",
+                enum: ["open", "disabled"],
+              },
+            },
+          },
+          textChunkLimit: {
+            type: "number",
+            minimum: 100,
+          },
+        },
+        required: [],
+      },
+      channels: ["ani"],
+      uiHints: {
+        serverUrl: {
+          label: "Server URL",
+          placeholder: "https://your-ani-server.example.com",
+          help: "Base URL of the ANI server (no trailing slash)",
+        },
+        apiKey: {
+          label: "API Key",
+          placeholder: "aim_...",
+          sensitive: true,
+          help: "Permanent API key (aim_ prefix). Bootstrap keys (aimb_) are not supported.",
+        },
+        entityId: {
+          label: "Bot Entity ID",
+          help: "Numeric entity ID on the ANI server (auto-detected if omitted)",
+        },
+        enabled: {
+          label: "Enabled",
+          help: "Enable or disable the ANI channel",
+        },
+        textChunkLimit: {
+          label: "Text Chunk Limit",
+          help: "Max characters per outbound message chunk (default: 4000)",
+          advanced: true,
+        },
+        "dm.policy": {
+          label: "DM Policy",
+          help: "Direct message routing policy (open or disabled)",
+          advanced: true,
+        },
+      },
+    },
+  },
+  {
     dirName: "anthropic",
     idHint: "anthropic",
     source: {

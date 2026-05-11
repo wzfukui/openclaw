@@ -1,8 +1,14 @@
-import type { ChannelOutboundAdapter } from "./sdk-compat.js";
-
-import { getAniRuntime } from "./runtime.js";
-import { sendAniMessage, uploadAniFile, toggleAniReaction, fetchConversation, resolveAniMentionsFromText } from "./monitor/send.js";
+import {
+  sendAniMessage,
+  uploadAniFile,
+  toggleAniReaction,
+  fetchConversation,
+  resolveAniMentionPublicIdsFromText,
+  resolveAniMentionsFromText,
+} from "./monitor/send.js";
 import type { AniInteraction, AniAttachment } from "./monitor/send.js";
+import { getAniRuntime } from "./runtime.js";
+import type { ChannelOutboundAdapter } from "./sdk-compat.js";
 import { resolveAniCredentials } from "./utils.js";
 
 /** Parse conversation ID from target string like "ani:conv:123" or "123". */
@@ -27,18 +33,32 @@ export async function sendAniTextWithExtras(opts: {
   to: string;
   text: string;
   mentions?: number[];
+  mentionPublicIds?: string[];
   interaction?: AniInteraction;
 }): Promise<{ channel: string; messageId: string; roomId: string }> {
   const { serverUrl, apiKey } = resolveAniCredentials();
   const conversationId = parseConversationId(opts.to);
-  const mentions = opts.mentions && opts.mentions.length > 0
-    ? opts.mentions
-    : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: opts.text });
+  const mentionPublicIds =
+    opts.mentionPublicIds && opts.mentionPublicIds.length > 0
+      ? opts.mentionPublicIds
+      : await resolveOutboundMentionPublicIds({
+          serverUrl,
+          apiKey,
+          conversationId,
+          text: opts.text,
+        });
+  const mentions =
+    mentionPublicIds.length > 0
+      ? undefined
+      : opts.mentions && opts.mentions.length > 0
+        ? opts.mentions
+        : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: opts.text });
   const result = await sendAniMessage({
     serverUrl,
     apiKey,
     conversationId,
     text: opts.text,
+    mentionPublicIds,
     mentions,
     interaction: opts.interaction,
   });
@@ -68,19 +88,31 @@ export const aniOutbound: ChannelOutboundAdapter = {
     // Pass through mentions if the OpenClaw context provides them.
     // OpenClaw may pass mentions as an array of string IDs; convert to numbers.
     const mentionIds = Array.isArray(mentions)
-      ? mentions.map((m) => typeof m === "number" ? m : Number.parseInt(String(m), 10)).filter((n) => !Number.isNaN(n) && n > 0)
+      ? mentions
+          .map((m) => (typeof m === "number" ? m : Number.parseInt(String(m), 10)))
+          .filter((n) => !Number.isNaN(n) && n > 0)
       : undefined;
 
     const { serverUrl, apiKey } = resolveAniCredentials();
     const conversationId = parseConversationId(to);
-    const resolvedMentions = mentionIds && mentionIds.length > 0
-      ? mentionIds
-      : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text });
+    const mentionPublicIds = await resolveOutboundMentionPublicIds({
+      serverUrl,
+      apiKey,
+      conversationId,
+      text,
+    });
+    const resolvedMentions =
+      mentionPublicIds.length > 0
+        ? undefined
+        : mentionIds && mentionIds.length > 0
+          ? mentionIds
+          : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text });
     const result = await sendAniMessage({
       serverUrl,
       apiKey,
       conversationId,
       text,
+      mentionPublicIds,
       mentions: resolvedMentions,
     });
     return {
@@ -151,16 +183,33 @@ export const aniOutbound: ChannelOutboundAdapter = {
         ];
       } catch (err) {
         // If media download/upload fails, fall back to sending text with a link
-        getAniRuntime().logging?.verbose(`ani: sendMedia failed, falling back to text: ${String(err)}`);
+        getAniRuntime().logging?.verbose(
+          `ani: sendMedia failed, falling back to text: ${String(err)}`,
+        );
         const fallbackText = text
           ? `${text}\n\n[Media link: ${mediaUrl}]`
           : `[Media link: ${mediaUrl}]`;
+        const mentionPublicIds = await resolveOutboundMentionPublicIds({
+          serverUrl,
+          apiKey,
+          conversationId,
+          text: fallbackText,
+        });
         const result = await sendAniMessage({
           serverUrl,
           apiKey,
           conversationId,
           text: fallbackText,
-          mentions: await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: fallbackText }),
+          mentionPublicIds,
+          mentions:
+            mentionPublicIds.length > 0
+              ? undefined
+              : await resolveOutboundMentions({
+                  serverUrl,
+                  apiKey,
+                  conversationId,
+                  text: fallbackText,
+                }),
         });
         return {
           channel: "ani",
@@ -173,6 +222,12 @@ export const aniOutbound: ChannelOutboundAdapter = {
     // Determine content type from first attachment
     const contentType = attachments?.[0]?.type;
 
+    const mentionPublicIds = await resolveOutboundMentionPublicIds({
+      serverUrl,
+      apiKey,
+      conversationId,
+      text: text ?? "",
+    });
     const result = await sendAniMessage({
       serverUrl,
       apiKey,
@@ -180,7 +235,11 @@ export const aniOutbound: ChannelOutboundAdapter = {
       text: text ?? "",
       attachments,
       contentType,
-      mentions: await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: text ?? "" }),
+      mentionPublicIds,
+      mentions:
+        mentionPublicIds.length > 0
+          ? undefined
+          : await resolveOutboundMentions({ serverUrl, apiKey, conversationId, text: text ?? "" }),
     });
     return {
       channel: "ani",
@@ -200,4 +259,15 @@ async function resolveOutboundMentions(opts: {
   const conversation = await fetchConversation(opts);
   const mentions = resolveAniMentionsFromText(opts.text, conversation?.participants);
   return mentions.length > 0 ? mentions : undefined;
+}
+
+async function resolveOutboundMentionPublicIds(opts: {
+  serverUrl: string;
+  apiKey: string;
+  conversationId: number;
+  text: string;
+}): Promise<string[]> {
+  if (!opts.text.includes("@")) return [];
+  const conversation = await fetchConversation(opts);
+  return resolveAniMentionPublicIdsFromText(opts.text, conversation?.participants);
 }

@@ -1,6 +1,6 @@
 # @wzfukui/openclaw-ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.9**.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.11**.
 
 ## Features
 
@@ -9,7 +9,7 @@ OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/a
 - **Streaming progress** -- long-running tasks show real-time status in chat via status layers with typing indicators
 - **Artifact rendering** -- `<artifact>` tags in model output sent as structured content (HTML, code, mermaid)
 - **File handling** -- send/receive images, documents, audio, video, archives (up to 32 MB); small text files inlined for AI, protected binary files downloaded with ANI auth and saved to local media paths
-- **Multi-bot collaboration** -- group conversations with multiple bots, @mention routing, conversation context injection
+- **Multi-bot collaboration** -- group conversations with multiple bots, structured @mention routing, conversation context injection
 - **Message revoke listener** -- detects `message.revoked` events and aborts in-flight delivery for that message
 - **Stream cancel abort** -- `stream.cancel` / `task.cancel` events abort the active agent dispatch via AbortController
 - **Reactions** -- ack-reaction on message receipt (configurable via `messages.ackReaction`)
@@ -80,6 +80,8 @@ All settings live under `channels.ani` in your OpenClaw config.
 **Inbound (ANI -> OpenClaw):** WebSocket connection to `/api/v1/ws`. On `message.new`, fetches conversation context (title, participants, memories), formats an agent envelope, dispatches through the reply pipeline. Revoked messages and cancelled streams are detected and aborted in-flight.
 
 **Outbound (OpenClaw -> ANI):** REST API `POST /api/v1/messages/send`. Parses `<artifact>` tags into structured content. Plain text chunked at markdown boundaries. Files uploaded via multipart then sent as attachments.
+
+**Structured mentions:** The plugin prefers ANI `mention_public_ids` UUIDs for outbound @mentions. When a model writes a visible `@DisplayName`, `@bot_id`, or `@name` that uniquely matches a conversation participant, the plugin attaches the participant's public UUID in `mention_public_ids`. Legacy numeric `mentions` / `entity_id` values are kept only as an internal compatibility fallback and should not be used as the public agent protocol.
 
 **Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and discover entity ID. Only permanent keys (`aim_`) accepted.
 

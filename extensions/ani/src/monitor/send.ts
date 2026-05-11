@@ -37,9 +37,10 @@ async function fetchWithRetry(
       // Retry on 429 (rate limit) — respect Retry-After header
       if (res.status === 429 && attempt < maxAttempts) {
         const retryAfterSec = Number(res.headers.get("Retry-After") || 0);
-        const retryDelay = retryAfterSec > 0
-          ? Math.min(retryAfterSec, 30) * 1000
-          : baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
+        const retryDelay =
+          retryAfterSec > 0
+            ? Math.min(retryAfterSec, 30) * 1000
+            : baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
         await res.body?.cancel(); // drain response to free connection
         await new Promise((r) => setTimeout(r, retryDelay));
         continue;
@@ -148,8 +149,10 @@ export async function sendAniMessage(opts: {
   text: string;
   /** If provided, sends as content_type "artifact" instead of plain text. */
   artifact?: AniArtifact;
-  /** Entity IDs to @mention (must be conversation participants). */
+  /** Legacy internal entity IDs to @mention (must be conversation participants). */
   mentions?: number[];
+  /** Public UUIDs to @mention. Preferred for agent/plugin protocol surfaces. */
+  mentionPublicIds?: string[];
   /** Interaction layer for interactive cards (approval/selection UI). */
   interaction?: AniInteraction;
   /** File/media attachments to include with the message. */
@@ -187,6 +190,9 @@ export async function sendAniMessage(opts: {
   const payload: Record<string, unknown> = {
     conversation_id: opts.conversationId,
     layers,
+    ...(opts.mentionPublicIds && opts.mentionPublicIds.length > 0
+      ? { mention_public_ids: opts.mentionPublicIds }
+      : {}),
     ...(contentType ? { content_type: contentType } : {}),
     ...(opts.mentions && opts.mentions.length > 0 ? { mentions: opts.mentions } : {}),
     ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
@@ -264,11 +270,50 @@ export interface AniConversation {
     role?: string;
     entity?: {
       id: number;
+      public_id?: string;
       display_name?: string;
       name?: string;
+      bot_id?: string;
       entity_type?: string;
     };
   }>;
+}
+
+export function resolveAniMentionPublicIdsFromText(
+  text: string,
+  participants: AniConversation["participants"] | undefined,
+  opts: { selfPublicId?: string } = {},
+): string[] {
+  if (!text || !participants || participants.length === 0) return [];
+
+  const aliasToPublicIds = new Map<string, Set<string>>();
+  for (const participant of participants) {
+    const publicId = participant.entity?.public_id?.trim();
+    if (!publicId || publicId === opts.selfPublicId) continue;
+    for (const alias of participantAliases(participant)) {
+      const key = alias.toLowerCase();
+      const ids = aliasToPublicIds.get(key) ?? new Set<string>();
+      ids.add(publicId);
+      aliasToPublicIds.set(key, ids);
+    }
+  }
+
+  const mentions: string[] = [];
+  const seen = new Set<string>();
+  for (const participant of participants) {
+    const publicId = participant.entity?.public_id?.trim();
+    if (!publicId || publicId === opts.selfPublicId || seen.has(publicId)) continue;
+    if (
+      participantAliases(participant).some((alias) => {
+        const ids = aliasToPublicIds.get(alias.toLowerCase());
+        return ids?.size === 1 && textMentionsAlias(text, alias);
+      })
+    ) {
+      seen.add(publicId);
+      mentions.push(publicId);
+    }
+  }
+  return mentions;
 }
 
 export function resolveAniMentionsFromText(
@@ -283,18 +328,39 @@ export function resolveAniMentionsFromText(
   for (const participant of participants) {
     const entityId = participant.entity_id ?? participant.entity?.id;
     if (!entityId || entityId === opts.selfEntityId || seen.has(entityId)) continue;
-
-    const names = [
-      participant.entity?.display_name,
-      participant.entity?.name,
-    ].filter((name): name is string => Boolean(name?.trim()));
-
-    if (names.some((name) => text.includes(`@${name}`))) {
+    if (participantAliases(participant).some((alias) => textMentionsAlias(text, alias))) {
       seen.add(entityId);
       mentions.push(entityId);
     }
   }
   return mentions;
+}
+
+function participantAliases(
+  participant: NonNullable<AniConversation["participants"]>[number],
+): string[] {
+  const candidates = [
+    participant.entity?.display_name,
+    participant.entity?.name,
+    participant.entity?.bot_id,
+    participant.entity?.public_id,
+  ];
+  const aliases: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const alias = candidate?.trim().replace(/^@+/, "");
+    if (!alias) continue;
+    const key = alias.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    aliases.push(alias);
+  }
+  return aliases;
+}
+
+function textMentionsAlias(text: string, alias: string): boolean {
+  const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)@${escaped}(?=$|[\\s:：,，.。!！?？;；、])`, "i").test(text);
 }
 
 export interface AniMemory {

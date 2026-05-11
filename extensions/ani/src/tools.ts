@@ -1,14 +1,13 @@
-import { Type } from "@sinclair/typebox";
-import type { ChannelAgentTool } from "./sdk-compat.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-
+import { Type } from "@sinclair/typebox";
 import {
   createAniTask,
   deleteAniTask,
   fetchConversation,
   getAniTask,
   listAniTasks,
+  resolveAniMentionPublicIdsFromText,
   resolveAniMentionsFromText,
   sendAniMessage,
   updateAniTask,
@@ -16,13 +15,16 @@ import {
   type AniTask,
 } from "./monitor/send.js";
 import type { AniAttachment } from "./monitor/send.js";
+import type { ChannelAgentTool } from "./sdk-compat.js";
 import { resolveAniCredentials, getMimeType } from "./utils.js";
 
 const TASK_STATUS_VALUES = ["pending", "in_progress", "done", "cancelled", "handed_over"] as const;
 const TASK_PRIORITY_VALUES = ["low", "medium", "high"] as const;
 
 function formatTask(task: AniTask): string {
-  const assignee = task.assignee?.display_name ?? (task.assignee_id != null ? `#${task.assignee_id}` : "unassigned");
+  const assignee =
+    task.assignee?.display_name ??
+    (task.assignee_id != null ? `#${task.assignee_id}` : "unassigned");
   const creator = task.creator?.display_name ?? `#${task.created_by}`;
   const due = task.due_date ? `, due ${task.due_date}` : "";
   const parent = task.parent_task_id != null ? `, parent #${task.parent_task_id}` : "";
@@ -30,19 +32,21 @@ function formatTask(task: AniTask): string {
     `#${task.id} ${task.title}`,
     `status=${task.status}, priority=${task.priority}, assignee=${assignee}, creator=${creator}${due}${parent}`,
     task.description?.trim() ? `description: ${task.description.trim()}` : "",
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function validateTaskStatus(status: string | undefined): string | null {
   if (!status) return null;
-  return TASK_STATUS_VALUES.includes(status as typeof TASK_STATUS_VALUES[number])
+  return TASK_STATUS_VALUES.includes(status as (typeof TASK_STATUS_VALUES)[number])
     ? status
     : `Error: status must be one of ${TASK_STATUS_VALUES.join(", ")}`;
 }
 
 function validateTaskPriority(priority: string | undefined): string | null {
   if (!priority) return null;
-  return TASK_PRIORITY_VALUES.includes(priority as typeof TASK_PRIORITY_VALUES[number])
+  return TASK_PRIORITY_VALUES.includes(priority as (typeof TASK_PRIORITY_VALUES)[number])
     ? priority
     : `Error: priority must be one of ${TASK_PRIORITY_VALUES.join(", ")}`;
 }
@@ -79,7 +83,8 @@ export function createSendFileTool(): ChannelAgentTool {
       ),
       filename: Type.Optional(
         Type.String({
-          description: "Filename with extension (required when using content mode, optional for file_path mode)",
+          description:
+            "Filename with extension (required when using content mode, optional for file_path mode)",
         }),
       ),
       content: Type.Optional(
@@ -112,7 +117,9 @@ export function createSendFileTool(): ChannelAgentTool {
       const caption = params.caption?.trim() ?? "";
 
       if (!filePath && !textContent) {
-        return { content: [{ type: "text" as const, text: "Error: provide either file_path or content" }] };
+        return {
+          content: [{ type: "text" as const, text: "Error: provide either file_path or content" }],
+        };
       }
 
       try {
@@ -126,14 +133,30 @@ export function createSendFileTool(): ChannelAgentTool {
           const resolved = path.resolve(filePath);
           const workspace = process.cwd();
           if (!resolved.startsWith(workspace + path.sep) && resolved !== workspace) {
-            return { content: [{ type: "text" as const, text: `Access denied: file must be within workspace (${workspace})` }] };
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Access denied: file must be within workspace (${workspace})`,
+                },
+              ],
+            };
           }
           const stat = await fs.stat(resolved);
           if (!stat.isFile()) {
-            return { content: [{ type: "text" as const, text: `Error: ${resolved} is not a file` }] };
+            return {
+              content: [{ type: "text" as const, text: `Error: ${resolved} is not a file` }],
+            };
           }
           if (stat.size > 32 * 1024 * 1024) {
-            return { content: [{ type: "text" as const, text: `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB, max 32MB)` }] };
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Error: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB, max 32MB)`,
+                },
+              ],
+            };
           }
           buffer = await fs.readFile(resolved);
           filename = params.filename?.trim() || path.basename(filePath);
@@ -155,13 +178,15 @@ export function createSendFileTool(): ChannelAgentTool {
         else if (mimeType.startsWith("video/")) attachType = "video";
 
         // Send message with attachment
-        const attachments: AniAttachment[] = [{
-          type: attachType,
-          url: uploaded.url,
-          filename: uploaded.filename,
-          mime_type: mimeType,
-          size: buffer.length,
-        }];
+        const attachments: AniAttachment[] = [
+          {
+            type: attachType,
+            url: uploaded.url,
+            filename: uploaded.filename,
+            mime_type: mimeType,
+            size: buffer.length,
+          },
+        ];
 
         const result = await sendAniMessage({
           serverUrl,
@@ -170,21 +195,30 @@ export function createSendFileTool(): ChannelAgentTool {
           text: caption || `📎 ${filename}`,
           attachments,
           contentType: attachType,
-          mentions: await resolveToolMentions({ serverUrl, apiKey, conversationId, text: caption || "" }),
+          ...(await resolveToolMentions({
+            serverUrl,
+            apiKey,
+            conversationId,
+            text: caption || "",
+          })),
         });
 
         return {
-          content: [{
-            type: "text" as const,
-            text: `File "${filename}" (${(buffer.length / 1024).toFixed(1)}KB, ${mimeType}) sent to conversation ${conversationId}. Message ID: ${result.messageId}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `File "${filename}" (${(buffer.length / 1024).toFixed(1)}KB, ${mimeType}) sent to conversation ${conversationId}. Message ID: ${result.messageId}`,
+            },
+          ],
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error sending file: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error sending file: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
@@ -196,11 +230,16 @@ async function resolveToolMentions(opts: {
   apiKey: string;
   conversationId: number;
   text: string;
-}): Promise<number[] | undefined> {
-  if (!opts.text.includes("@")) return undefined;
+}): Promise<{ mentionPublicIds?: string[]; mentions?: number[] }> {
+  if (!opts.text.includes("@")) return {};
   const conversation = await fetchConversation(opts);
+  const mentionPublicIds = resolveAniMentionPublicIdsFromText(
+    opts.text,
+    conversation?.participants,
+  );
+  if (mentionPublicIds.length > 0) return { mentionPublicIds };
   const mentions = resolveAniMentionsFromText(opts.text, conversation?.participants);
-  return mentions.length > 0 ? mentions : undefined;
+  return mentions.length > 0 ? { mentions } : {};
 }
 
 /**
@@ -227,17 +266,20 @@ export function createGetHistoryTool(): ChannelAgentTool {
     ].join(" "),
     parameters: Type.Object({
       conversation_id: Type.Number({
-        description: "The conversation ID to fetch messages from. You can find this in the system prompt under 'Current Conversation'.",
+        description:
+          "The conversation ID to fetch messages from. You can find this in the system prompt under 'Current Conversation'.",
       }),
       limit: Type.Optional(
         Type.Number({
-          description: "Number of messages to return. Default: 5, max: 50. Use 50 to get a fuller picture.",
+          description:
+            "Number of messages to return. Default: 5, max: 50. Use 50 to get a fuller picture.",
           default: 5,
         }),
       ),
       since_id: Type.Optional(
         Type.Number({
-          description: "Only return messages with ID greater than this value. Useful for incremental fetching — pass the ID of the last message you already have.",
+          description:
+            "Only return messages with ID greater than this value. Useful for incremental fetching — pass the ID of the last message you already have.",
         }),
       ),
     }),
@@ -268,36 +310,48 @@ export function createGetHistoryTool(): ChannelAgentTool {
         });
 
         if (!res.ok) {
-          return { content: [{ type: "text" as const, text: `Error fetching history: HTTP ${res.status}` }] };
+          return {
+            content: [
+              { type: "text" as const, text: `Error fetching history: HTTP ${res.status}` },
+            ],
+          };
         }
 
-        const json = await res.json() as { data?: { messages?: Array<Record<string, unknown>> } };
+        const json = (await res.json()) as { data?: { messages?: Array<Record<string, unknown>> } };
         const messages = json.data?.messages ?? [];
 
         // Format messages for LLM readability
-        const formatted = messages.map((m: Record<string, unknown>) => {
-          const sender = (m.sender as Record<string, unknown>)?.display_name ?? `entity-${m.sender_id}`;
-          const text = ((m.layers as Record<string, unknown>)?.summary as string) ?? "";
-          const time = m.created_at as string;
-          const atts = (m.attachments as Array<Record<string, unknown>>) ?? [];
-          const attDesc = atts.length > 0
-            ? ` [${atts.length} attachment(s): ${atts.map((a) => a.filename ?? a.type).join(", ")}]`
-            : "";
-          return `[${time}] ${sender}: ${text}${attDesc}`;
-        }).reverse(); // oldest first for readability
+        const formatted = messages
+          .map((m: Record<string, unknown>) => {
+            const sender =
+              (m.sender as Record<string, unknown>)?.display_name ?? `entity-${m.sender_id}`;
+            const text = ((m.layers as Record<string, unknown>)?.summary as string) ?? "";
+            const time = m.created_at as string;
+            const atts = (m.attachments as Array<Record<string, unknown>>) ?? [];
+            const attDesc =
+              atts.length > 0
+                ? ` [${atts.length} attachment(s): ${atts.map((a) => a.filename ?? a.type).join(", ")}]`
+                : "";
+            return `[${time}] ${sender}: ${text}${attDesc}`;
+          })
+          .reverse(); // oldest first for readability
 
         return {
-          content: [{
-            type: "text" as const,
-            text: `Conversation ${conversationId} — last ${messages.length} messages:\n\n${formatted.join("\n")}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Conversation ${conversationId} — last ${messages.length} messages:\n\n${formatted.join("\n")}`,
+            },
+          ],
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
@@ -319,7 +373,8 @@ export function createListTasksTool(): ChannelAgentTool {
       }),
       status: Type.Optional(
         Type.String({
-          description: "Optional status filter: pending, in_progress, done, cancelled, handed_over.",
+          description:
+            "Optional status filter: pending, in_progress, done, cancelled, handed_over.",
         }),
       ),
     }),
@@ -344,25 +399,31 @@ export function createListTasksTool(): ChannelAgentTool {
 
         if (tasks.length === 0) {
           return {
-            content: [{
-              type: "text" as const,
-              text: `Conversation ${params.conversation_id} has no tasks${params.status ? ` with status ${params.status}` : ""}.`,
-            }],
+            content: [
+              {
+                type: "text" as const,
+                text: `Conversation ${params.conversation_id} has no tasks${params.status ? ` with status ${params.status}` : ""}.`,
+              },
+            ],
           };
         }
 
         return {
-          content: [{
-            type: "text" as const,
-            text: `Conversation ${params.conversation_id} tasks (${tasks.length}):\n\n${tasks.map(formatTask).join("\n\n")}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Conversation ${params.conversation_id} tasks (${tasks.length}):\n\n${tasks.map(formatTask).join("\n\n")}`,
+            },
+          ],
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error listing tasks: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error listing tasks: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
@@ -393,10 +454,12 @@ export function createGetTaskTool(): ChannelAgentTool {
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error getting task: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error getting task: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
@@ -484,10 +547,12 @@ export function createCreateTaskTool(): ChannelAgentTool {
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error creating task: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error creating task: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
@@ -510,9 +575,17 @@ export function createUpdateTaskTool(): ChannelAgentTool {
       title: Type.Optional(Type.String({ description: "Optional new task title." })),
       description: Type.Optional(Type.String({ description: "Optional new description." })),
       assignee_id: Type.Optional(Type.Number({ description: "Optional new assignee entity ID." })),
-      status: Type.Optional(Type.String({ description: "Optional new status: pending, in_progress, done, cancelled, handed_over." })),
-      priority: Type.Optional(Type.String({ description: "Optional new priority: low, medium, high." })),
-      due_date: Type.Optional(Type.String({ description: "Optional new due date as RFC3339 timestamp." })),
+      status: Type.Optional(
+        Type.String({
+          description: "Optional new status: pending, in_progress, done, cancelled, handed_over.",
+        }),
+      ),
+      priority: Type.Optional(
+        Type.String({ description: "Optional new priority: low, medium, high." }),
+      ),
+      due_date: Type.Optional(
+        Type.String({ description: "Optional new due date as RFC3339 timestamp." }),
+      ),
       sort_order: Type.Optional(Type.Number({ description: "Optional new sort order integer." })),
     }),
     execute: async (_toolCallId, args) => {
@@ -539,7 +612,9 @@ export function createUpdateTaskTool(): ChannelAgentTool {
         params.due_date === undefined &&
         params.sort_order === undefined
       ) {
-        return { content: [{ type: "text" as const, text: "Error: provide at least one field to update" }] };
+        return {
+          content: [{ type: "text" as const, text: "Error: provide at least one field to update" }],
+        };
       }
       const statusErr = validateTaskStatus(params.status);
       if (statusErr) {
@@ -569,10 +644,12 @@ export function createUpdateTaskTool(): ChannelAgentTool {
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error updating task: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error updating task: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
@@ -606,10 +683,12 @@ export function createDeleteTaskTool(): ChannelAgentTool {
         };
       } catch (err) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Error deleting task: ${err instanceof Error ? err.message : String(err)}`,
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Error deleting task: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
         };
       }
     },
