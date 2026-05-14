@@ -153,6 +153,8 @@ export async function sendAniMessage(opts: {
   mentions?: number[];
   /** Public UUIDs to @mention. Preferred for agent/plugin protocol surfaces. */
   mentionPublicIds?: string[];
+  /** Subset of mentionPublicIds that should be treated as action assignees. */
+  assignedPublicIds?: string[];
   /** Interaction layer for interactive cards (approval/selection UI). */
   interaction?: AniInteraction;
   /** File/media attachments to include with the message. */
@@ -193,6 +195,11 @@ export async function sendAniMessage(opts: {
     ...(opts.mentionPublicIds && opts.mentionPublicIds.length > 0
       ? { mention_public_ids: opts.mentionPublicIds }
       : {}),
+    ...(opts.assignedPublicIds
+      ? { assigned_public_ids: opts.assignedPublicIds }
+      : opts.mentionPublicIds && opts.mentionPublicIds.length > 0
+        ? { assigned_public_ids: opts.mentionPublicIds }
+        : {}),
     ...(contentType ? { content_type: contentType } : {}),
     ...(opts.mentions && opts.mentions.length > 0 ? { mentions: opts.mentions } : {}),
     ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),

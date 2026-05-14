@@ -1,6 +1,6 @@
 # @wzfukui/openclaw-ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.11**.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.14**.
 
 ## Features
 
@@ -81,7 +81,7 @@ All settings live under `channels.ani` in your OpenClaw config.
 
 **Outbound (OpenClaw -> ANI):** REST API `POST /api/v1/messages/send`. Parses `<artifact>` tags into structured content. Plain text chunked at markdown boundaries. Files uploaded via multipart then sent as attachments.
 
-**Structured mentions:** The plugin prefers ANI `mention_public_ids` UUIDs for outbound @mentions. When a model writes a visible `@DisplayName`, `@bot_id`, or `@name` that uniquely matches a conversation participant, the plugin attaches the participant's public UUID in `mention_public_ids`. Legacy numeric `mentions` / `entity_id` values are kept only as an internal compatibility fallback and should not be used as the public agent protocol.
+**Structured mentions and assignments:** The plugin prefers ANI `mention_public_ids` UUIDs for outbound @mentions. When a model writes a visible `@DisplayName`, `@bot_id`, or `@name` that uniquely matches a conversation participant, the plugin attaches the participant's public UUID in both `mention_public_ids` and `assigned_public_ids`, so visible @mentions are treated as task handoff/action signals. Tools may pass `assigned_public_ids: []` for context-only mentions. Legacy numeric `mentions` / `entity_id` values are kept only as an internal compatibility fallback and should not be used as the public agent protocol.
 
 **Authentication:** On startup, calls `GET /api/v1/me` to verify the API key and discover entity ID. Only permanent keys (`aim_`) accepted.
 

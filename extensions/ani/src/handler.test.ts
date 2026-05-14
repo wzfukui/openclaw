@@ -336,8 +336,35 @@ describe("runWithAniOutboundActivity", () => {
       expect(requestBody).toMatchObject({
         conversation_id: 42,
         mention_public_ids: ["potato-public"],
+        assigned_public_ids: ["potato-public"],
       });
       expect(requestBody).not.toHaveProperty("mentions");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("honors explicit empty assigned public IDs for mention-only sends", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: unknown;
+    globalThis.fetch = (async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(JSON.stringify({ data: { id: 123 } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await sendAniMessage({
+        serverUrl: "https://agent-native.im",
+        apiKey: "aim_test",
+        conversationId: 42,
+        text: "@PotatoWire FYI only",
+        mentionPublicIds: ["potato-public"],
+        assignedPublicIds: [],
+      });
+      expect(requestBody).toMatchObject({
+        conversation_id: 42,
+        mention_public_ids: ["potato-public"],
+        assigned_public_ids: [],
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

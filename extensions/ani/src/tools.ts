@@ -97,6 +97,18 @@ export function createSendFileTool(): ChannelAgentTool {
           description: "Optional message text to accompany the file",
         }),
       ),
+      mention_public_ids: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "ANI public UUIDs to mention. If omitted, visible @names in caption are resolved automatically.",
+        }),
+      ),
+      assigned_public_ids: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Subset of mention_public_ids that should take action. Use [] for mention-only/no agent wake-up.",
+        }),
+      ),
     }),
     execute: async (_toolCallId, args) => {
       const params = args as {
@@ -105,6 +117,8 @@ export function createSendFileTool(): ChannelAgentTool {
         filename?: string;
         content?: string;
         caption?: string;
+        mention_public_ids?: string[];
+        assigned_public_ids?: string[];
       };
 
       const conversationId = params.conversation_id;
@@ -188,6 +202,14 @@ export function createSendFileTool(): ChannelAgentTool {
           },
         ];
 
+        const mentionPayload = params.mention_public_ids
+          ? { mentionPublicIds: params.mention_public_ids }
+          : await resolveToolMentions({
+              serverUrl,
+              apiKey,
+              conversationId,
+              text: caption || "",
+            });
         const result = await sendAniMessage({
           serverUrl,
           apiKey,
@@ -195,12 +217,8 @@ export function createSendFileTool(): ChannelAgentTool {
           text: caption || `📎 ${filename}`,
           attachments,
           contentType: attachType,
-          ...(await resolveToolMentions({
-            serverUrl,
-            apiKey,
-            conversationId,
-            text: caption || "",
-          })),
+          ...mentionPayload,
+          assignedPublicIds: params.assigned_public_ids,
         });
 
         return {

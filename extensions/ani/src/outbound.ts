@@ -34,6 +34,7 @@ export async function sendAniTextWithExtras(opts: {
   text: string;
   mentions?: number[];
   mentionPublicIds?: string[];
+  assignedPublicIds?: string[];
   interaction?: AniInteraction;
 }): Promise<{ channel: string; messageId: string; roomId: string }> {
   const { serverUrl, apiKey } = resolveAniCredentials();
@@ -59,6 +60,7 @@ export async function sendAniTextWithExtras(opts: {
     conversationId,
     text: opts.text,
     mentionPublicIds,
+    assignedPublicIds: opts.assignedPublicIds,
     mentions,
     interaction: opts.interaction,
   });
