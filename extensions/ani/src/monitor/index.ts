@@ -1,18 +1,45 @@
 import { format } from "node:util";
-
-import type { RuntimeEnv } from "../sdk-compat.js";
-
-import type { CoreConfig } from "../types.js";
 import { getAniRuntime } from "../runtime.js";
-import { verifyAniConnection } from "./send.js";
-import { createAniMessageHandler } from "./handler.js";
+import type { RuntimeEnv } from "../sdk-compat.js";
+import type { CoreConfig } from "../types.js";
 import { normalizeAniServerUrl } from "../utils.js";
+import { ANI_EXTENSION_NAME, ANI_EXTENSION_VERSION } from "../version.js";
+import { createAniMessageHandler } from "./handler.js";
+import { verifyAniConnection } from "./send.js";
 
 export type MonitorAniOpts = {
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   accountId?: string | null;
 };
+
+export type AniDeviceInfo = {
+  client: "openclaw";
+  client_version: string;
+  runtime: "node";
+  runtime_version: string;
+  extension: typeof ANI_EXTENSION_NAME;
+  extension_version: typeof ANI_EXTENSION_VERSION;
+};
+
+export function buildAniDeviceInfo(clientVersion: string): AniDeviceInfo {
+  return {
+    client: "openclaw",
+    client_version: clientVersion,
+    runtime: "node",
+    runtime_version: process.versions.node,
+    extension: ANI_EXTENSION_NAME,
+    extension_version: ANI_EXTENSION_VERSION,
+  };
+}
+
+export function buildAniWebSocketUrl(params: { serverUrl: string; clientVersion: string }): string {
+  const wsProto = params.serverUrl.startsWith("https") ? "wss" : "ws";
+  const wsHost = params.serverUrl.replace(/^https?:\/\//, "");
+  const wsUrl = new URL(`${wsProto}://${wsHost}/api/v1/ws`);
+  wsUrl.searchParams.set("device_info", JSON.stringify(buildAniDeviceInfo(params.clientVersion)));
+  return wsUrl.toString();
+}
 
 /**
  * Gateway entry point: connects to ANI via WebSocket, listens for messages,
@@ -69,9 +96,7 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
   });
 
   // Build WebSocket URL
-  const wsProto = serverUrl.startsWith("https") ? "wss" : "ws";
-  const wsHost = serverUrl.replace(/^https?:\/\//, "");
-  const wsUrl = `${wsProto}://${wsHost}/api/v1/ws`;
+  const wsUrl = buildAniWebSocketUrl({ serverUrl, clientVersion: core.version });
 
   // Dynamic import ws (Node.js WebSocket library)
   const { default: WebSocket } = await import("ws");
@@ -135,7 +160,9 @@ export async function monitorAniProvider(opts: MonitorAniOpts = {}): Promise<voi
       if (isShuttingDown) return;
       const delay = getReconnectDelay();
       backoffAttempt++;
-      logger.info(`ani: WebSocket closed (code=${code}), reconnecting in ${delay}ms (attempt ${backoffAttempt})...`);
+      logger.info(
+        `ani: WebSocket closed (code=${code}), reconnecting in ${delay}ms (attempt ${backoffAttempt})...`,
+      );
       reconnectTimer = setTimeout(connect, delay);
     });
 

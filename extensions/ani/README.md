@@ -1,6 +1,6 @@
 # @wzfukui/openclaw-ani
 
-OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.14**.
+OpenClaw channel plugin for [Agent-Native IM (ANI)](https://github.com/wzfukui/agent-native-im), a messaging platform built for human and AI bot collaboration. Version **2026.5.15**.
 
 ## Features
 
@@ -77,7 +77,7 @@ All settings live under `channels.ani` in your OpenClaw config.
 
 ## How It Works
 
-**Inbound (ANI -> OpenClaw):** WebSocket connection to `/api/v1/ws`. On `message.new`, fetches conversation context (title, participants, memories), formats an agent envelope, dispatches through the reply pipeline. Revoked messages and cancelled streams are detected and aborted in-flight.
+**Inbound (ANI -> OpenClaw):** WebSocket connection to `/api/v1/ws` with a `device_info` query parameter identifying the OpenClaw client, Node runtime, and ANI extension version. On `message.new`, fetches conversation context (title, participants, memories), formats an agent envelope, dispatches through the reply pipeline. Revoked messages and cancelled streams are detected and aborted in-flight.
 
 **Outbound (OpenClaw -> ANI):** REST API `POST /api/v1/messages/send`. Parses `<artifact>` tags into structured content. Plain text chunked at markdown boundaries. Files uploaded via multipart then sent as attachments.
 

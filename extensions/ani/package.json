@@ -1,6 +1,6 @@
 {
   "name": "@wzfukui/openclaw-ani",
-  "version": "2026.5.14",
+  "version": "2026.5.15",
   "description": "ANI Agent-Native IM channel plugin",
   "type": "module",
   "dependencies": {

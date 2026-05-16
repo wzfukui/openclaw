@@ -156,7 +156,7 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
       built: "index.js",
     },
     packageName: "@wzfukui/openclaw-ani",
-    packageVersion: "2026.5.14",
+    packageVersion: "2026.5.15",
     packageDescription: "ANI Agent-Native IM channel plugin",
     packageManifest: {
       extensions: ["./index.ts"],
